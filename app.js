@@ -207,6 +207,21 @@ function makeArtwork(track) {
   });
   box.appendChild(addBtn);
 
+  // v0.5: download arrow, bottom-right. Only when the artist allowed it.
+  const dlBtn = downloadButton(track, "card-dl");
+  if (dlBtn) {
+    box.appendChild(dlBtn);
+  }
+
+  // v0.5: heart, top-left. Likes are always available.
+  box.appendChild(likeButton(track, "card-like"));
+
+  // v0.5: hide button, top-right. Hiding never deletes the song.
+  const cardHide = hideButton(track, "card-hide");
+  if (cardHide) {
+    box.appendChild(cardHide);
+  }
+
   return box;
 }
 
@@ -234,6 +249,13 @@ function trackCard(track, index, onPick) {
   }
   card.addEventListener("click", pick);
   card.addEventListener("keydown", function (event) {
+    // The + / download / heart / hide buttons handle their own keys;
+    // without this guard, Enter on one of them would also start the song.
+    // The play overlay has no own action, so it keeps the card's.
+    if (event.target.closest &&
+        event.target.closest(".card-add, .card-dl, .card-like, .card-hide")) {
+      return;
+    }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       pick();
@@ -274,9 +296,10 @@ async function loadTrending() {
     }
 
     trendingMessage.hidden = true;
-    trendingTracks = tracks;
+    // v0.5: hidden songs never appear in auto content, not even here.
+    trendingTracks = visibleTracks(tracks);
     // Clicking a card starts playing from the trending list at that card.
-    renderTracks(trendingGrid, tracks, function (index) {
+    renderTracks(trendingGrid, trendingTracks, function (index) {
       startQueue(trendingTracks, index);
     });
     if (browseMode === "flow") {
@@ -356,19 +379,40 @@ function playCurrent() {
     return;
   }
   lastSkipSrc = ""; // new track, so a fresh skip is allowed
-  const src = track._objectUrl || streamUrl(track.id);
+  // v0.5: a saved offline copy wins over streaming, exactly like
+  // Spotify playing downloads first. Local files (v0.4) still first.
+  const local = localSrc(track);
+  // v0.5: offline with nothing saved means nothing to play.
+  if (!navigator.onLine && !track._objectUrl && !local) {
+    showSkipNote("You are offline. Play a downloaded song instead.");
+    return;
+  }
+  playingOffline = !!local && !track._objectUrl;
+  const src = track._objectUrl || local || streamUrl(track.id);
   if (xfadeSecs > 0 && !activeAudio.paused && activeAudio.src) {
     startCrossfade(src);
   } else {
     activeAudio = audio;
     audio.src = src;
     audio.play().catch(function () {
+      if (local) {
+        // The saved file is gone (removed outside the app). Drop the
+        // stale entry and try the stream once instead of skipping.
+        removeDownload(track.id, { silent: true });
+        showSkipNote("Saved file missing. Streaming instead.");
+        playCurrent();
+        return;
+      }
       // The browser refused to play. Often a stream-gated track.
       skipWithNote();
     });
   }
   updatePlayerUI(track);
   pushRecent(track);
+  // v0.5: count one play and open a listening-time session.
+  statsPlayStart(track);
+  // v0.5: the DJ voice announces the track when enabled.
+  djAnnounce(track);
 }
 
 // Play / pause toggle for the big round button.
@@ -391,6 +435,9 @@ function nextTrack() {
   if (currentIndex + 1 < queue.length) {
     currentIndex = currentIndex + 1;
     playCurrent();
+  } else {
+    // v0.5: nowhere to go; close the listening-time books.
+    statsPlayStop();
   }
 }
 
@@ -450,6 +497,12 @@ function updatePlayerUI(track) {
   playerArtist.textContent = artistName(track);
   document.title = track.title + " - " + artistName(track) + " | Sonara";
 
+  // v0.5: show the "Offline copy" badge when the saved file is playing.
+  offlineBadge.hidden = !playingOffline;
+
+  // v0.5: light up the heart when the current song is liked.
+  syncPlayerLike();
+
   // Keep the mini player in sync when it is open.
   if (miniOpen || !miniPlayer.hidden) {
     syncMiniTrack();
@@ -467,9 +520,13 @@ function updatePlayerUI(track) {
 
 // One row in the Up Next list: small artwork, title, artist.
 // The currently playing song gets highlighted.
+// v0.5: the root is a div (not a button) so a download button can
+// sit inside it; keyboard support is added by hand to match.
 function queueRow(track, index) {
-  const row = document.createElement("button");
+  const row = document.createElement("div");
   row.className = "queue-row";
+  row.tabIndex = 0;
+  row.setAttribute("role", "button");
   if (index === currentIndex) {
     row.className = "queue-row playing";
   }
@@ -504,12 +561,92 @@ function queueRow(track, index) {
   artist.textContent = artistName(track);
   text.appendChild(artist);
 
+  // v0.5: smart-shuffle picks get a quiet "Suggested" tag.
+  if (track._suggested) {
+    const tag = document.createElement("span");
+    tag.className = "suggested-tag";
+    tag.textContent = "Suggested";
+    text.appendChild(tag);
+  }
+
   row.appendChild(text);
 
+  // v0.5: download arrow at the row's end, when the artist allowed it.
+  const dlBtn = downloadButton(track, "dl-btn");
+  if (dlBtn) {
+    row.appendChild(dlBtn);
+  }
+
+  // v0.5: heart next to the download arrow.
+  row.appendChild(likeButton(track, "like-btn"));
+
+  // v0.5: drag to reorder with mouse or touch. The row being dragged
+  // goes quiet; a thin ember line shows exactly where it will land.
+  // Touch screens keep native scrolling: dragging is mouse-only.
+  const finePointer = window.matchMedia &&
+    window.matchMedia("(pointer: fine)").matches;
+  if (finePointer) {
+    row.draggable = true;
+  }
+  row.addEventListener("dragstart", function (event) {
+    if (!finePointer) {
+      return;
+    }
+    dragIndex = index;
+    event.dataTransfer.effectAllowed = "move";
+    try {
+      event.dataTransfer.setData("text/plain", String(index));
+    } catch (e) {
+      // Some browsers do not need the payload; the index is enough.
+    }
+    row.classList.add("dragging");
+  });
+  row.addEventListener("dragend", function () {
+    row.classList.remove("dragging");
+    clearDropMarks();
+    dragIndex = -1;
+  });
+  row.addEventListener("dragover", function (event) {
+    if (dragIndex === -1 || dragIndex === index) {
+      return;
+    }
+    event.preventDefault(); // required, or drop never fires
+    event.dataTransfer.dropEffect = "move";
+    clearDropMarks();
+    const rect = row.getBoundingClientRect();
+    const before = (event.clientY - rect.top) < rect.height / 2;
+    row.classList.add(before ? "drop-before" : "drop-after");
+    row.dataset.dropBefore = before ? "1" : "";
+  });
+  row.addEventListener("drop", function (event) {
+    event.preventDefault();
+    const from = dragIndex;
+    const before = row.dataset.dropBefore === "1";
+    clearDropMarks();
+    moveQueueItem(from, index, before);
+  });
+
+  // v0.5: arrow buttons, the keyboard alternative to dragging.
+  // They only appear on hover or focus, so calm rows stay calm.
+  row.appendChild(moveButton(track, index, -1));
+  row.appendChild(moveButton(track, index, 1));
+
   // Clicking a row jumps straight to that song.
-  row.addEventListener("click", function () {
+  function jump() {
     currentIndex = index;
     playCurrent();
+  }
+  row.addEventListener("click", jump);
+  row.addEventListener("keydown", function (event) {
+    // Inner buttons (heart, download, movers) handle their own keys;
+    // without this, Enter on one of them would also jump the song.
+    if (event.target !== row) {
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      jump();
+    }
   });
 
   return row;
@@ -569,13 +706,39 @@ function trackSummary(track) {
     "150x150": track.artwork["150x150"] || null,
     "480x480": track.artwork["480x480"] || null
   } : null;
-  return { id: track.id, title: track.title, artist: artistName(track), artwork: art };
+  // v0.5: keep the artist's download choice with the summary, so the
+  // download button can appear on playlist rows too. Old saved songs
+  // lack these fields and simply get no button.
+  const dl = track.download && track.download.url
+    ? { url: track.download.url }
+    : null;
+  return {
+    id: track.id,
+    title: track.title,
+    artist: artistName(track),
+    artwork: art,
+    is_downloadable: track.is_downloadable === true,
+    download: dl,
+    // v0.5: genre, mood and tempo travel with the summary so mixes,
+    // Daylist and charts can use them without another API call.
+    // Old saved songs simply lack these fields.
+    genre: track.genre || null,
+    mood: track.mood || null,
+    bpm: track.bpm || null
+  };
 }
 
 // The playlist buttons in the sidebar, with a song count on each.
 function renderPlaylistNav() {
   playlistNav.innerHTML = "";
+  // v0.5: Liked Songs and Weekly Mix pin above the user's playlists.
+  renderSpecialPlaylists();
+  // v0.5: folders group playlists; filed playlists render inside them.
+  renderFolderNav();
   playlists.forEach(function (pl) {
+    if (isPlaylistFiled(pl.id)) {
+      return; // lives inside a folder, rendered there instead
+    }
     const b = document.createElement("button");
     b.className = "nav-btn playlist-btn";
     b.dataset.pid = pl.id;
@@ -604,7 +767,9 @@ function showPlaylist(pid) {
 }
 
 // One row inside an open playlist, with a remove button.
-function playlistRow(pl, song, index) {
+// onRemove overrides the default "take out of this playlist" when given
+// (used by the Liked Songs and Weekly Mix virtual playlists).
+function playlistRow(pl, song, index, onRemove) {
   const row = document.createElement("div");
   row.className = "queue-row";
 
@@ -646,12 +811,40 @@ function playlistRow(pl, song, index) {
   rm.textContent = "x";
   rm.addEventListener("click", function (event) {
     event.stopPropagation();
+    if (onRemove) {
+      onRemove(index);
+      return;
+    }
     pl.tracks.splice(index, 1);
     savePlaylists();
     renderPlaylistNav();
     renderPlaylistSongs();
   });
   row.appendChild(rm);
+
+  // v0.5: heart next to the remove button.
+  row.appendChild(likeButton(song, "like-btn"));
+
+  // v0.5: hide button next to the heart. Hiding never deletes.
+  const hideBtn = hideButton(song);
+  if (hideBtn) {
+    row.appendChild(hideBtn);
+  }
+
+  // v0.5: a quiet tag where a hidden song still shows (playlists), so
+  // nothing vanishes without an explanation.
+  if (isHiddenId(song.id)) {
+    const tag = document.createElement("span");
+    tag.className = "hidden-tag";
+    tag.textContent = "Hidden";
+    row.appendChild(tag);
+  }
+
+  // v0.5: download arrow next to the remove button, when allowed.
+  const dlBtn = downloadButton(song, "dl-btn");
+  if (dlBtn) {
+    row.appendChild(dlBtn);
+  }
 
   // Clicking the row plays the playlist from this song.
   row.addEventListener("click", function () {
@@ -662,6 +855,20 @@ function playlistRow(pl, song, index) {
 }
 
 function renderPlaylistSongs() {
+  // v0.5: Liked Songs and Weekly Mix are virtual playlists.
+  if (openPlaylistId === "liked" || openPlaylistId === "mix") {
+    renderSpecialPlaylistSongs();
+    return;
+  }
+  // v0.5: Daylist and Discover Mix are virtual playlists too.
+  if (isVirtualMixId(openPlaylistId)) {
+    renderDayOrDiscover();
+    return;
+  }
+  deletePlaylistBtn.hidden = false;
+  refreshMixBtn.hidden = true;
+  // v0.5: only real playlists can move into folders.
+  folderMoveBtn.hidden = false;
   const pl = findPlaylist(openPlaylistId);
   playlistList.innerHTML = "";
 
@@ -685,6 +892,22 @@ function renderPlaylistSongs() {
   pl.tracks.forEach(function (song, index) {
     playlistList.appendChild(playlistRow(pl, song, index));
   });
+
+  // v0.5: "Download all" shows only when at least one song in the
+  // playlist can actually be downloaded and is not saved yet.
+  const pending = pl.tracks.filter(function (song) {
+    return canDownload(song) && !isDownloaded(song.id) &&
+      dlProgress[song.id] === undefined;
+  });
+  downloadAllBtn.hidden = pending.length === 0;
+  downloadAllBtn.onclick = function () {
+    pending.forEach(function (song) {
+      startDownload(song);
+    });
+    showSkipNote("Downloading " + pending.length +
+      (pending.length === 1 ? " song." : " songs."));
+    renderPlaylistSongs();
+  };
 }
 
 // Adds a song to a playlist, unless it is already there.
@@ -957,9 +1180,10 @@ function wireAudio(el) {
   });
 
   // When a track finishes, move to the next one.
+  // v0.5: at the end of the queue, radio mode keeps the music going.
   el.addEventListener("ended", function () {
     if (el !== activeAudio) return;
-    nextTrack();
+    advanceTrack();
   });
 
   // When a stream fails (for example a gated track), skip it quietly.
@@ -993,11 +1217,16 @@ function showView(view) {
   playlistView.hidden = view !== "playlist";
   lyricsView.hidden = view !== "lyrics";
   recentView.hidden = view !== "recent";
+  downloadedView.hidden = view !== "downloaded";
+  libraryView.hidden = view !== "library";
+  statsView.hidden = view !== "stats";
+  chartsView.hidden = view !== "charts";
 
   navButtons.forEach(function (other) {
     other.classList.toggle("active", other.dataset.view === view);
   });
-  const pbtns = playlistNav.querySelectorAll(".playlist-btn");
+  // v0.5: folder items live in #folderNav, so both lists count.
+  const pbtns = document.querySelectorAll("#playlistNav .playlist-btn, #folderNav .playlist-btn");
   pbtns.forEach(function (b) {
     b.classList.toggle("active",
       view === "playlist" && b.dataset.pid === openPlaylistId);
@@ -1015,6 +1244,28 @@ function showView(view) {
   }
   if (view === "recent") {
     renderRecent();
+  }
+  if (view === "downloaded") {
+    renderDownloaded();
+    // v0.5: the Offline Mixtape rebuilds itself when a day old.
+    checkMixtapeFresh();
+  }
+  if (view === "library") {
+    renderLibrary();
+  }
+  if (view === "stats") {
+    renderStats();
+    // v0.5: the yearly Recap grows out of the same stats.
+    renderRecap();
+  }
+  if (view === "charts") {
+    renderCharts();
+  }
+
+  // v0.5: replay the staggered headline reveal for the new view.
+  var section = document.getElementById(view + "View");
+  if (section) {
+    revealHeadline(section.querySelector("h1"));
   }
 }
 
@@ -1065,6 +1316,20 @@ deletePlaylistBtn.addEventListener("click", function () {
   }
   playlists = playlists.filter(function (p) { return p.id !== openPlaylistId; });
   savePlaylists();
+  // v0.5: a deleted playlist also leaves any folder that held it.
+  const goneId = openPlaylistId;
+  const folders = loadFolders();
+  let changed = false;
+  folders.forEach(function (f) {
+    const before = f.playlistIds.length;
+    f.playlistIds = f.playlistIds.filter(function (x) { return x !== goneId; });
+    if (f.playlistIds.length !== before) {
+      changed = true;
+    }
+  });
+  if (changed) {
+    saveFolders(folders);
+  }
   renderPlaylistNav();
   openPlaylistId = null;
   deleteArmed = false;
@@ -2349,6 +2614,8 @@ function openSoundMenu() {
   row.appendChild(sel);
   soundMenu.appendChild(title);
   soundMenu.appendChild(row);
+  // v0.5: DJ voice controls live in the same panel.
+  appendDjVoiceRows(soundMenu);
 
   // The footer sits at the bottom, so the panel opens upward.
   const r = soundBtn.getBoundingClientRect();
@@ -2375,6 +2642,2996 @@ soundBtn.addEventListener("click", function (event) {
 soundMenu.addEventListener("click", function (event) {
   event.stopPropagation();
 });
+
+
+// ---------- 22. v0.5: reel motion effects ----------
+
+// Reel 1 (Raylight promo) + Reel 2 (liquidGL "Liquid Glass") motion,
+// hand-built in vanilla JS. The CSS in styles.css does the visuals;
+// this file only drives them. Everything here respects
+// prefers-reduced-motion, matching the scrambleText pattern above.
+
+// --- Staggered word-by-word headline reveals ---
+// Splits an h1 into word spans; CSS fades each one up with a 120ms
+// stagger. Safe to re-run: reading textContent back gives the plain
+// words, so switching views simply replays the reveal.
+function revealHeadline(h1) {
+  if (!h1) {
+    return;
+  }
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return;
+  }
+  var text = h1.textContent;
+  if (!text || !text.trim()) {
+    return;
+  }
+  h1.innerHTML = "";
+  var words = text.split(" ");
+  words.forEach(function (word, i) {
+    if (i > 0) {
+      h1.appendChild(document.createTextNode(" "));
+    }
+    var span = document.createElement("span");
+    span.className = "rw";
+    span.style.animationDelay = (i * 120) + "ms";
+    span.textContent = word;
+    h1.appendChild(span);
+  });
+}
+
+// --- Cursor-tracked 3D tilt on track cards ---
+// The artwork leans toward the pointer (max ~15deg each way) and
+// eases back flat on leave. One delegated listener covers every
+// card, including ones rendered later.
+var tiltReduceMotion =
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+var tiltCard = null;
+var tiltArt = null;
+
+function clearTilt() {
+  if (tiltArt) {
+    tiltArt.style.setProperty("--rx", "0deg");
+    tiltArt.style.setProperty("--ry", "0deg");
+  }
+  tiltCard = null;
+  tiltArt = null;
+}
+
+if (!tiltReduceMotion) {
+  document.addEventListener("mousemove", function (event) {
+    var target = event.target;
+    var card = target && target.closest ? target.closest(".card") : null;
+    if (!card) {
+      if (tiltCard) {
+        clearTilt();
+      }
+      return;
+    }
+    if (card !== tiltCard) {
+      clearTilt();
+      tiltCard = card;
+      tiltArt = card.querySelector(".artwork");
+      if (!tiltArt) {
+        tiltCard = null;
+        return;
+      }
+    }
+    var rect = tiltArt.getBoundingClientRect();
+    var px = (event.clientX - rect.left) / rect.width - 0.5;
+    var py = (event.clientY - rect.top) / rect.height - 0.5;
+    tiltArt.style.setProperty("--ry", (px * 30).toFixed(1) + "deg");
+    tiltArt.style.setProperty("--rx", (-py * 30).toFixed(1) + "deg");
+  });
+
+  document.addEventListener("mouseout", function (event) {
+    if (tiltCard &&
+        (!event.relatedTarget || !tiltCard.contains(event.relatedTarget))) {
+      clearTilt();
+    }
+  });
+
+  // Scrolling can leave a stale tilt behind; clear it.
+  document.addEventListener("scroll", clearTilt, { passive: true });
+}
+
+// Reveal the Browse headline on first load.
+revealHeadline(document.querySelector("#browseView h1"));
+
+
+// ---------- 23. Offline downloads (Spotify-style) ----------
+
+// LEGAL BOUNDARY, read before touching this code:
+// A download button is shown ONLY when the Audius API says
+// is_downloadable === true AND hands us a download.url for the track.
+// That flag is the artist's own choice. There is no "download
+// anything" path in this app, and there never will be: ignoring the
+// flag would take artists' work against their choice.
+
+// Registry shape in localStorage ("sonara-downloads"):
+//   { [trackId]: { id, title, artist, artwork, filePath, size,
+//                  downloadedAt, external } }
+// external=true means a plain browser saved the file into the user's
+// Downloads folder. Only the Mac app keeps files it can play back.
+
+const DL_KEY = "sonara-downloads";
+const downloadedView = document.getElementById("downloadedView");
+const downloadedList = document.getElementById("downloadedList");
+const downloadedMessage = document.getElementById("downloadedMessage");
+const downloadedSubtitle = document.getElementById("downloadedSubtitle");
+const dlStorage = document.getElementById("dlStorage");
+const removeAllDlBtn = document.getElementById("removeAllDlBtn");
+const offlinePill = document.getElementById("offlinePill");
+const offlineBadge = document.getElementById("offlineBadge");
+const downloadAllBtn = document.getElementById("downloadAllBtn");
+
+let downloads = loadDownloads(); // the registry
+const dlProgress = {};           // trackId -> 0..100 while downloading
+const dlMetaCache = {};          // trackId -> {title, artist, artwork}, kept while downloading
+let playingOffline = false;      // true when the saved copy is playing
+
+const DL_ARROW_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>';
+const CHECK_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
+
+// True only inside the Electron Mac app, where the download bridge exists.
+function isDesktop() {
+  return !!(window.sonara && window.sonara.downloadTrack);
+}
+
+// The artist's choice, straight from the Audius API. Both must hold.
+function canDownload(track) {
+  return !!(track && track.is_downloadable === true &&
+    track.download && track.download.url);
+}
+
+function loadDownloads() {
+  try {
+    const raw = localStorage.getItem(DL_KEY);
+    const obj = raw ? JSON.parse(raw) : {};
+    return obj && typeof obj === "object" ? obj : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function saveDownloads() {
+  try {
+    localStorage.setItem(DL_KEY, JSON.stringify(downloads));
+  } catch (error) {
+    // Storage is full or blocked. The app keeps working for this session.
+  }
+}
+
+function isDownloaded(trackId) {
+  return !!(trackId && downloads[trackId]);
+}
+
+// The file the player should use, or null when we should stream.
+// file:// works because the Mac app loads its page over file:// too.
+function localSrc(track) {
+  if (!track || !isDesktop()) {
+    return null;
+  }
+  const entry = downloads[track.id];
+  if (entry && entry.filePath && !entry.external) {
+    return "file://" + entry.filePath;
+  }
+  return null;
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) {
+    return "0 KB";
+  }
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1) {
+    return mb.toFixed(1) + " MB";
+  }
+  return Math.max(1, Math.round(bytes / 1024)) + " KB";
+}
+
+// Starts a download. In the Mac app the main process fetches the file;
+// in a plain browser this is an honest one-shot save into the user's
+// Downloads folder, because a web page cannot silently manage files.
+function startDownload(track) {
+  if (!canDownload(track) || isDownloaded(track.id) ||
+      dlProgress[track.id] !== undefined) {
+    return;
+  }
+  if (isDesktop()) {
+    dlMetaCache[track.id] = {
+      title: track.title,
+      artist: artistName(track),
+      artwork: trackSummary(track).artwork
+    };
+    dlProgress[track.id] = 0;
+    window.sonara.downloadTrack({
+      trackId: track.id,
+      url: track.download.url,
+      title: track.title
+    });
+  } else {
+    const a = document.createElement("a");
+    a.href = track.download.url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    downloads[track.id] = {
+      id: track.id,
+      title: track.title,
+      artist: artistName(track),
+      artwork: trackSummary(track).artwork,
+      filePath: null,
+      size: 0,
+      downloadedAt: Date.now(),
+      external: true
+    };
+    saveDownloads();
+    renderDownloaded();
+    showSkipNote("Saved to your Downloads folder. The browser cannot keep it inside Sonara.");
+  }
+  syncDownloadButtons();
+}
+
+// Removes a saved song. options.silent skips the note, used when the
+// file vanished on its own and we are only cleaning the registry.
+function removeDownload(trackId, options) {
+  const entry = downloads[trackId];
+  if (!entry) {
+    return;
+  }
+  if (isDesktop() && entry.filePath && !entry.external) {
+    window.sonara.deleteDownload({ trackId: trackId, filePath: entry.filePath });
+  }
+  delete downloads[trackId];
+  delete dlProgress[trackId];
+  delete dlMetaCache[trackId];
+  saveDownloads();
+  syncDownloadButtons();
+  renderDownloaded();
+  if (!(options && options.silent)) {
+    showSkipNote("Download removed.");
+  }
+}
+
+// One download button for one track, or null when the artist did not
+// allow downloads. cls picks the card or the row styling. Every button
+// carries its track id so syncDownloadButtons can refresh them all in
+// place, without re-rendering any list.
+function downloadButton(track, cls) {
+  if (!canDownload(track)) {
+    return null;
+  }
+  const btn = document.createElement("button");
+  btn.className = cls;
+  btn.setAttribute("data-dl-btn", "");
+  btn.dataset.trackId = track.id;
+  btn.dataset.title = track.title;
+  btn.addEventListener("click", function (event) {
+    event.stopPropagation();
+    onDownloadTap(track, btn);
+  });
+  paintDlBtn(btn);
+  return btn;
+}
+
+// Paints one button from the current state: arrow, live %, or checkmark.
+function paintDlBtn(btn) {
+  const id = btn.dataset.trackId;
+  const title = btn.dataset.title || "this song";
+  btn.classList.remove("downloading", "done", "armed");
+  if (isDownloaded(id)) {
+    btn.classList.add("done");
+    btn.innerHTML = CHECK_SVG;
+    btn.setAttribute("aria-label", "Remove download of " + title);
+  } else if (dlProgress[id] !== undefined) {
+    btn.classList.add("downloading");
+    btn.textContent = Math.round(dlProgress[id]) + "%";
+    btn.setAttribute("aria-label", "Downloading " + title);
+  } else {
+    btn.innerHTML = DL_ARROW_SVG;
+    btn.setAttribute("aria-label", "Download " + title + " for offline");
+  }
+}
+
+function syncDownloadButtons() {
+  const buttons = document.querySelectorAll("[data-dl-btn]");
+  buttons.forEach(paintDlBtn);
+}
+
+// Tapping the button: download, or, when already saved, arm removal.
+// Removal uses the app's tap-again-to-confirm pattern, no popups.
+function onDownloadTap(track, btn) {
+  const id = track.id;
+  if (isDownloaded(id)) {
+    if (btn.dataset.armed === "1") {
+      btn.dataset.armed = "";
+      removeDownload(id);
+      return;
+    }
+    btn.dataset.armed = "1";
+    btn.classList.add("armed");
+    btn.textContent = "?";
+    btn.setAttribute("aria-label", "Tap again to remove the download");
+    setTimeout(function () {
+      if (btn.dataset.armed === "1") {
+        btn.dataset.armed = "";
+        paintDlBtn(btn);
+      }
+    }, 3000);
+    return;
+  }
+  if (dlProgress[id] !== undefined) {
+    return; // already downloading; the % on the button is the feedback
+  }
+  startDownload(track);
+}
+
+// Answers from the main process about downloads.
+if (isDesktop()) {
+  window.sonara.onDownloadProgress(function (data) {
+    if (!data || !data.trackId || dlProgress[data.trackId] === undefined) {
+      return;
+    }
+    dlProgress[data.trackId] = data.total > 0
+      ? Math.min(100, (data.received / data.total) * 100)
+      : 0;
+    syncDownloadButtons();
+  });
+
+  window.sonara.onDownloadDone(function (data) {
+    if (!data || !data.trackId) {
+      return;
+    }
+    const meta = dlMetaCache[data.trackId] || {};
+    downloads[data.trackId] = {
+      id: data.trackId,
+      title: meta.title || "Unknown title",
+      artist: meta.artist || "Unknown artist",
+      artwork: meta.artwork || null,
+      filePath: data.filePath,
+      size: data.size || 0,
+      downloadedAt: Date.now(),
+      external: false
+    };
+    delete dlProgress[data.trackId];
+    delete dlMetaCache[data.trackId];
+    saveDownloads();
+    syncDownloadButtons();
+    renderDownloaded();
+    showSkipNote("Downloaded. It will play offline from now on.");
+  });
+
+  window.sonara.onDownloadError(function (data) {
+    if (!data || !data.trackId) {
+      return;
+    }
+    delete dlProgress[data.trackId];
+    delete dlMetaCache[data.trackId];
+    syncDownloadButtons();
+    showSkipNote(data.message || "Download failed. Try again.");
+  });
+}
+
+// ---------- The Downloaded view ----------
+
+function downloadedTracks() {
+  return Object.keys(downloads)
+    .map(function (id) { return downloads[id]; })
+    .sort(function (a, b) { return b.downloadedAt - a.downloadedAt; });
+}
+
+function renderDownloaded() {
+  downloadedList.innerHTML = "";
+  const list = downloadedTracks();
+  downloadedMessage.hidden = list.length > 0;
+  downloadedSubtitle.textContent = list.length === 0
+    ? "Songs saved on this Mac"
+    : list.length + (list.length === 1 ? " song" : " songs") +
+      " saved on this Mac";
+  list.forEach(function (entry) {
+    downloadedList.appendChild(downloadedRow(entry));
+  });
+  updateDlStorage();
+}
+
+// One row in the Downloaded view: artwork, title, size, remove button.
+// Tapping the row plays the song, from the saved file when we have it.
+function downloadedRow(entry) {
+  const row = document.createElement("div");
+  row.className = "queue-row";
+  row.tabIndex = 0;
+  row.setAttribute("role", "button");
+
+  const art = document.createElement("div");
+  art.className = "q-art";
+  const url = entry.artwork ? entry.artwork["150x150"] : null;
+  if (url) {
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "";
+    img.onerror = function () {
+      art.innerHTML = "";
+      art.appendChild(noteIcon());
+    };
+    art.appendChild(img);
+  } else {
+    art.appendChild(noteIcon());
+  }
+  row.appendChild(art);
+
+  const text = document.createElement("div");
+  text.className = "q-text";
+
+  const title = document.createElement("div");
+  title.className = "q-title";
+  title.textContent = entry.title;
+  text.appendChild(title);
+
+  const sub = document.createElement("div");
+  sub.className = "q-artist";
+  sub.textContent = entry.artist + " · " +
+    (entry.external ? "in Downloads folder" : formatBytes(entry.size));
+  text.appendChild(sub);
+
+  row.appendChild(text);
+
+  const rm = document.createElement("button");
+  rm.className = "remove-btn";
+  rm.setAttribute("aria-label", "Remove download");
+  rm.textContent = "x";
+  rm.addEventListener("click", function (event) {
+    event.stopPropagation();
+    removeDownload(entry.id);
+  });
+  row.appendChild(rm);
+
+  function play() {
+    // The id is enough: playCurrent streams it, or picks the saved
+    // file when this Mac has it.
+    startQueue([{
+      id: entry.id,
+      title: entry.title,
+      user: { name: entry.artist },
+      artwork: entry.artwork,
+      is_downloadable: true,
+      download: null
+    }], 0);
+  }
+  row.addEventListener("click", play);
+  row.addEventListener("keydown", function (event) {
+    // The remove button handles its own keys.
+    if (event.target !== row) {
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      play();
+    }
+  });
+
+  return row;
+}
+
+// "12 songs · 48.3 MB" line at the top of the Downloaded view.
+function updateDlStorage() {
+  const list = downloadedTracks();
+  let total = 0;
+  list.forEach(function (entry) { total += entry.size || 0; });
+  dlStorage.textContent = list.length === 0
+    ? ""
+    : list.length + (list.length === 1 ? " song" : " songs") +
+      " · " + formatBytes(total);
+}
+
+// Remove all: first click arms it, second click confirms.
+let removeAllArmed = false;
+let removeAllTimer = null;
+removeAllDlBtn.addEventListener("click", function () {
+  const ids = Object.keys(downloads);
+  if (ids.length === 0) {
+    return;
+  }
+  if (!removeAllArmed) {
+    removeAllArmed = true;
+    removeAllDlBtn.textContent = "Click again to confirm";
+    clearTimeout(removeAllTimer);
+    removeAllTimer = setTimeout(function () {
+      removeAllArmed = false;
+      removeAllDlBtn.textContent = "Remove all";
+    }, 3000);
+    return;
+  }
+  ids.forEach(function (id) {
+    removeDownload(id, { silent: true });
+  });
+  removeAllArmed = false;
+  removeAllDlBtn.textContent = "Remove all";
+  showSkipNote("All downloads removed.");
+});
+
+
+// ---------- 24. Offline mode ----------
+
+// The pill in the header and the Downloaded view are the offline home.
+// Trying to stream a song that is not saved while offline is refused
+// with a plain note instead of a silent failure.
+function updateOnlineUI() {
+  offlinePill.hidden = navigator.onLine;
+}
+
+window.addEventListener("online", updateOnlineUI);
+window.addEventListener("offline", updateOnlineUI);
+updateOnlineUI();
+
+
+
+
+// ---------- 25. v0.5: 11 roadmap features (step 3) ----------
+
+// Borrowed, with credit in spirit, from the famous music apps:
+// Spotify (Liked Songs, stats, mixes, queue, radio), YouTube Music
+// (radio, speed, library, mixtape, discover, recap), JioSaavn
+// (language charts), Echo Music (track story, share, lyric styles,
+// smart playback). Everything below is free, needs no login, and
+// keeps the app's zero-dependency, plain-JavaScript character.
+
+
+// ===== 25.1 Liked Songs (Spotify-style hearts) =====
+
+// Hearts live in localStorage "sonara-liked": track summaries,
+// newest first. The same summary shape playlists use.
+const LIKE_KEY = "sonara-liked";
+const HEART_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>';
+const MIX_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>';
+
+let likedTracks = loadLiked();
+
+function loadLiked() {
+  try {
+    const raw = localStorage.getItem(LIKE_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveLiked() {
+  try {
+    localStorage.setItem(LIKE_KEY, JSON.stringify(likedTracks));
+  } catch (error) {
+    // Storage is full or blocked. Likes work for this session.
+  }
+}
+
+function isLiked(trackId) {
+  return likedTracks.some(function (t) {
+    return String(t.id) === String(trackId);
+  });
+}
+
+// Tapping a heart adds or removes the song, then refreshes every
+// heart on screen plus the sidebar count.
+function toggleLike(track) {
+  if (!track || track.id == null) {
+    return;
+  }
+  const at = likedTracks.findIndex(function (t) {
+    return String(t.id) === String(track.id);
+  });
+  if (at === -1) {
+    likedTracks.unshift(trackSummary(track));
+    showSkipNote("Added to Liked Songs.");
+  } else {
+    likedTracks.splice(at, 1);
+    showSkipNote("Removed from Liked Songs.");
+  }
+  saveLiked();
+  syncLikeButtons();
+  renderPlaylistNav();
+  if (openPlaylistId === "liked") {
+    renderPlaylistSongs();
+  }
+  if (!libraryView.hidden && libTab === "songs") {
+    renderLibrary();
+  }
+}
+
+// One heart button for one track. cls picks the card or row styling.
+// Every button carries its track id so syncLikeButtons can repaint
+// them all in place, without re-rendering any list.
+function likeButton(track, cls) {
+  const btn = document.createElement("button");
+  btn.className = cls;
+  btn.setAttribute("data-like-btn", "");
+  btn.dataset.trackId = track.id;
+  btn.addEventListener("click", function (event) {
+    event.stopPropagation();
+    toggleLike(track);
+  });
+  paintLikeBtn(btn);
+  return btn;
+}
+
+function paintLikeBtn(btn) {
+  const liked = isLiked(btn.dataset.trackId);
+  btn.classList.toggle("liked", liked);
+  btn.innerHTML = HEART_SVG;
+  btn.setAttribute("aria-label", liked ? "Unlike this song" : "Like this song");
+}
+
+function syncLikeButtons() {
+  document.querySelectorAll("[data-like-btn]").forEach(paintLikeBtn);
+  syncPlayerLike();
+}
+
+// The heart in the now-playing bar follows the current song.
+const likeBtn = document.getElementById("likeBtn");
+
+function syncPlayerLike() {
+  const track = queue[currentIndex];
+  const liked = !!(track && isLiked(track.id));
+  likeBtn.classList.toggle("liked", liked);
+  likeBtn.setAttribute("aria-label",
+    liked ? "Unlike this song" : "Like this song");
+}
+
+likeBtn.addEventListener("click", function () {
+  const track = queue[currentIndex];
+  if (track) {
+    toggleLike(track);
+  } else {
+    showSkipNote("Play a song first.");
+  }
+});
+
+// ===== 25.2 Your stats (Spotify Wrapped-style, on-device only) =====
+
+// Every play is counted here in localStorage "sonara-stats":
+//   { [trackId]: { id, title, artist, artwork, plays, seconds } }
+// Seconds accumulate only while sound is actually playing. Nothing
+// ever leaves the Mac: there is no account and no server to send to.
+const STATS_KEY = "sonara-stats";
+
+const statsView = document.getElementById("statsView");
+const statsBody = document.getElementById("statsBody");
+const statsMessage = document.getElementById("statsMessage");
+
+function loadStats() {
+  try {
+    const raw = localStorage.getItem(STATS_KEY);
+    const obj = raw ? JSON.parse(raw) : {};
+    return obj && typeof obj === "object" ? obj : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function saveStats(stats) {
+  try {
+    localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+  } catch (error) {
+    // Storage is full or blocked. Stats pause for this session.
+  }
+}
+
+// One open listening session. t0 is when the current stretch of
+// audible playback began; pauses and track changes close it out.
+let statSession = null;
+
+// A new track started: count one play, then open a timing session.
+function statsPlayStart(track) {
+  statsPlayStop(); // finalize any previous session first
+  if (!track || track.id == null || track._local) {
+    return; // local files are session-only, like recent history
+  }
+  const stats = loadStats();
+  const id = String(track.id);
+  const entry = stats[id] || {
+    id: track.id,
+    title: track.title,
+    artist: artistName(track),
+    artwork: trackSummary(track).artwork,
+    // v0.5: genre travels with the stats so Recap can name a top genre.
+    genre: track.genre || null,
+    plays: 0,
+    seconds: 0
+  };
+  entry.plays += 1;
+  entry.title = track.title;
+  entry.artist = artistName(track);
+  if (track.genre) {
+    entry.genre = track.genre;
+  }
+  stats[id] = entry;
+  saveStats(stats);
+  statSession = { id: id, t0: Date.now() };
+  if (!statsView.hidden) {
+    renderStats();
+  }
+}
+
+// Playback stopped being audible: bank the seconds and close out.
+function statsPlayStop() {
+  if (!statSession) {
+    return;
+  }
+  const stats = loadStats();
+  const entry = stats[statSession.id];
+  if (entry) {
+    entry.seconds += Math.max(0, (Date.now() - statSession.t0) / 1000);
+    saveStats(stats);
+  }
+  statSession = null;
+}
+
+// Resuming mid-song: restart the clock, but do not count a new play.
+// Pause closed the session, so resume reopens one for the current
+// track; without this, every second after a pause would go uncounted.
+function statsPlayResume() {
+  if (statSession) {
+    statSession.t0 = Date.now();
+    return;
+  }
+  const track = queue[currentIndex];
+  if (track && track.id != null && !track._local) {
+    statSession = { id: String(track.id), t0: Date.now() };
+  }
+}
+
+// Hook the real audio elements, mirroring wireAudio's activeAudio guard.
+// Pause closes the session; play reopens the clock without a new count.
+function wireStats(el) {
+  el.addEventListener("pause", function () {
+    if (el !== activeAudio) {
+      return;
+    }
+    statsPlayStop();
+  });
+  el.addEventListener("play", function () {
+    if (el !== activeAudio) {
+      return;
+    }
+    statsPlayResume();
+  });
+}
+wireStats(audio);
+wireStats(audioX);
+
+// The Stats view: total minutes, top 5 songs, top 5 artists.
+function renderStats() {
+  const stats = loadStats();
+  const entries = Object.keys(stats).map(function (k) {
+    return stats[k];
+  }).filter(function (e) {
+    return e.plays > 0;
+  });
+  statsMessage.hidden = entries.length > 0;
+  statsBody.innerHTML = "";
+  if (entries.length === 0) {
+    return;
+  }
+
+  const totalSecs = entries.reduce(function (sum, e) {
+    return sum + (e.seconds || 0);
+  }, 0);
+
+  const big = document.createElement("div");
+  big.className = "stat-block";
+  const bigNum = document.createElement("div");
+  bigNum.className = "stat-big";
+  bigNum.textContent = Math.round(totalSecs / 60);
+  const bigLabel = document.createElement("div");
+  bigLabel.className = "stat-big-label";
+  bigLabel.textContent = "minutes listened on this Mac";
+  big.appendChild(bigNum);
+  big.appendChild(bigLabel);
+  statsBody.appendChild(big);
+
+  statsBody.appendChild(statBlock("Top songs",
+    entries.slice().sort(function (a, b) {
+      return b.plays - a.plays;
+    }).slice(0, 5).map(function (e) {
+      return { name: e.title, sub: e.artist, meta: e.plays + (e.plays === 1 ? " play" : " plays") };
+    })));
+
+  const byArtist = {};
+  entries.forEach(function (e) {
+    const a = byArtist[e.artist] || { artist: e.artist, plays: 0 };
+    a.plays += e.plays;
+    byArtist[e.artist] = a;
+  });
+  statsBody.appendChild(statBlock("Top artists",
+    Object.keys(byArtist).map(function (k) {
+      return byArtist[k];
+    }).sort(function (a, b) {
+      return b.plays - a.plays;
+    }).slice(0, 5).map(function (a) {
+      return { name: a.artist, sub: "", meta: a.plays + (a.plays === 1 ? " play" : " plays") };
+    })));
+}
+
+// One titled block of ranked rows. Plain numbers, no fake fanfare.
+function statBlock(title, rows) {
+  const block = document.createElement("div");
+  block.className = "stat-block";
+  const h = document.createElement("h2");
+  h.textContent = title;
+  block.appendChild(h);
+  rows.forEach(function (r, i) {
+    const row = document.createElement("div");
+    row.className = "stat-row";
+    const rank = document.createElement("span");
+    rank.className = "stat-rank";
+    rank.textContent = (i + 1);
+    const name = document.createElement("span");
+    name.className = "stat-name";
+    name.textContent = r.name + (r.sub ? " - " + r.sub : "");
+    const meta = document.createElement("span");
+    meta.className = "stat-sub";
+    meta.textContent = r.meta;
+    row.appendChild(rank);
+    row.appendChild(name);
+    row.appendChild(meta);
+    block.appendChild(row);
+  });
+  return block;
+}
+
+// ===== 25.3 Weekly Mix (your own Discover Weekly) =====
+
+// The mix lives in localStorage "sonara-weekly-mix":
+//   { generatedAt, tracks: [summaries] }
+// Half is your most-played (from stats), half is fresh trending.
+// It rebuilds itself when opened stale (older than 7 days).
+const MIX_KEY = "sonara-weekly-mix";
+const MIX_MAX = 20;
+const MIX_STALE_MS = 7 * 24 * 3600 * 1000;
+const LIKED_ID = "liked";
+const MIX_ID = "mix";
+
+const refreshMixBtn = document.getElementById("refreshMixBtn");
+
+function loadMix() {
+  try {
+    const raw = localStorage.getItem(MIX_KEY);
+    const m = raw ? JSON.parse(raw) : null;
+    if (m && Array.isArray(m.tracks)) {
+      return m;
+    }
+  } catch (error) {
+    // fall through to the empty mix
+  }
+  return { generatedAt: 0, tracks: [] };
+}
+
+function saveMix(mix) {
+  try {
+    localStorage.setItem(MIX_KEY, JSON.stringify(mix));
+  } catch (error) {
+    // Storage is full or blocked. The mix works for this session.
+  }
+}
+
+function buildWeeklyMix() {
+  const stats = loadStats();
+  const top = Object.keys(stats).map(function (k) {
+    return stats[k];
+  }).sort(function (a, b) {
+    return b.plays - a.plays;
+  }).slice(0, 8);
+
+  const tracks = [];
+  const seen = {};
+  top.forEach(function (s) {
+    // v0.5: a hidden song does not sneak back in through the tops.
+    if (isHiddenId(s.id)) {
+      return;
+    }
+    tracks.push({
+      id: s.id,
+      title: s.title,
+      artist: s.artist,
+      artwork: s.artwork
+    });
+    seen[String(s.id)] = true;
+  });
+  // Fill the rest with trending songs you have not already got.
+  // When offline, trending is empty and the mix is just your tops.
+  // v0.5: hidden songs stay out of every auto mix.
+  trendingTracks.forEach(function (t) {
+    if (tracks.length >= MIX_MAX) {
+      return;
+    }
+    if (isHiddenId(t.id)) {
+      return;
+    }
+    if (!seen[String(t.id)]) {
+      tracks.push(trackSummary(t));
+      seen[String(t.id)] = true;
+    }
+  });
+  return { generatedAt: Date.now(), tracks: tracks };
+}
+
+refreshMixBtn.addEventListener("click", function () {
+  const mix = buildWeeklyMix();
+  saveMix(mix);
+  renderPlaylistNav();
+  renderSpecialPlaylistSongs();
+  showSkipNote("Mix refreshed with this week's songs.");
+});
+
+// Liked Songs and Weekly Mix pin above the user's own playlists.
+// They are virtual: no delete button, and the mix gets Refresh.
+function renderSpecialPlaylists() {
+  playlistNav.appendChild(specialNavButton(LIKED_ID, "Liked Songs",
+    HEART_SVG, likedTracks.length));
+  playlistNav.appendChild(specialNavButton(MIX_ID, "Weekly Mix",
+    MIX_SVG, loadMix().tracks.length));
+  // v0.5: Daylist and Discover Mix pin here too.
+  renderMoreSpecialPlaylists();
+}
+
+function specialNavButton(id, name, iconSvg, count) {
+  const b = document.createElement("button");
+  b.className = "nav-btn playlist-btn";
+  b.dataset.pid = id;
+  const icon = document.createElement("span");
+  icon.className = "pl-icon";
+  icon.innerHTML = iconSvg;
+  b.appendChild(icon);
+  const label = document.createElement("span");
+  label.textContent = name;
+  b.appendChild(label);
+  const c = document.createElement("span");
+  c.className = "count";
+  c.textContent = count;
+  b.appendChild(c);
+  b.addEventListener("click", function () {
+    showPlaylist(id);
+  });
+  return b;
+}
+
+// The open view for a virtual playlist. The mix rebuilds when stale;
+// liked songs render straight from the hearts registry.
+function renderSpecialPlaylistSongs() {
+  const isMix = openPlaylistId === MIX_ID;
+  let tracks;
+  if (isMix) {
+    let mix = loadMix();
+    if (mix.tracks.length === 0 ||
+        Date.now() - mix.generatedAt > MIX_STALE_MS) {
+      mix = buildWeeklyMix();
+      saveMix(mix);
+    }
+    tracks = mix.tracks;
+    playlistTitle.textContent = "Weekly Mix";
+    playlistSubtitle.textContent = "Made for you from your plays and trending";
+  } else {
+    tracks = likedTracks;
+    playlistTitle.textContent = "Liked Songs";
+    playlistSubtitle.textContent = tracks.length +
+      (tracks.length === 1 ? " song" : " songs") + " you loved";
+  }
+  playlistList.innerHTML = "";
+  refreshMixBtn.hidden = !isMix;
+  deletePlaylistBtn.hidden = true;
+  // v0.5: virtual mixes cannot move into folders.
+  folderMoveBtn.hidden = true;
+
+  if (tracks.length === 0) {
+    playlistMessage.textContent = isMix
+      ? "Nothing to mix yet. Play some music first."
+      : "No liked songs yet. Tap the heart on any song.";
+    playlistMessage.hidden = false;
+  } else {
+    playlistMessage.hidden = true;
+    tracks.forEach(function (song, index) {
+      playlistList.appendChild(playlistRow(
+        { tracks: tracks }, song, index,
+        isMix ? function (i) {
+          // Taking a song out of an auto-mix: drop it and re-save.
+          const m = loadMix();
+          m.tracks.splice(i, 1);
+          saveMix(m);
+          renderPlaylistNav();
+          renderSpecialPlaylistSongs();
+        } : function (i) {
+          toggleLike(tracks[i]);
+        }
+      ));
+    });
+  }
+
+  // "Download all" mirrors the real playlist behavior.
+  const pending = tracks.filter(function (song) {
+    return canDownload(song) && !isDownloaded(song.id) &&
+      dlProgress[song.id] === undefined;
+  });
+  downloadAllBtn.hidden = pending.length === 0;
+  downloadAllBtn.onclick = function () {
+    pending.forEach(function (song) {
+      startDownload(song);
+    });
+    showSkipNote("Downloading " + pending.length +
+      (pending.length === 1 ? " song." : " songs."));
+    renderSpecialPlaylistSongs();
+  };
+}
+
+// ===== 25.4 Better queue: drag reorder + save as playlist =====
+
+// Which queue row is being dragged, or -1 when none is.
+let dragIndex = -1;
+
+// Removes the ember landing lines from every queue row.
+function clearDropMarks() {
+  queueList.querySelectorAll(".drop-before, .drop-after").forEach(
+    function (row) {
+      row.classList.remove("drop-before");
+      row.classList.remove("drop-after");
+      delete row.dataset.dropBefore;
+    });
+}
+
+// Moves one queue row to a new spot. `before` says whether it lands
+// in front of the target row or behind it. The playing highlight
+// follows the song, not the position.
+function moveQueueItem(from, to, before) {
+  if (from === -1 || from === to ||
+      from < 0 || from >= queue.length ||
+      to < 0 || to >= queue.length) {
+    return;
+  }
+  const item = queue.splice(from, 1)[0];
+  let dest = before ? to : to + 1;
+  if (from < dest) {
+    dest -= 1;
+  }
+  queue.splice(dest, 0, item);
+  if (currentIndex === from) {
+    currentIndex = dest;
+  } else if (from < currentIndex && dest >= currentIndex) {
+    currentIndex -= 1;
+  } else if (from > currentIndex && dest <= currentIndex) {
+    currentIndex += 1;
+  }
+  renderQueue();
+}
+
+// The small up/down arrows on each queue row: the keyboard and touch
+// alternative to dragging. dir is -1 (up) or 1 (down).
+function moveButton(track, index, dir) {
+  const b = document.createElement("button");
+  b.className = "q-move";
+  b.textContent = dir < 0 ? "↑" : "↓";
+  b.setAttribute("aria-label",
+    (dir < 0 ? "Move up: " : "Move down: ") + track.title);
+  b.addEventListener("click", function (event) {
+    event.stopPropagation();
+    if (dir < 0 && index > 0) {
+      moveQueueItem(index, index - 1, true);
+    } else if (dir > 0 && index < queue.length - 1) {
+      moveQueueItem(index, index + 1, false);
+    }
+  });
+  return b;
+}
+
+// "Save as playlist": the inline name box mirrors the sidebar's
+// playlist-creation pattern, so there is nothing new to learn.
+const saveQueueBtn = document.getElementById("saveQueueBtn");
+const saveQueueBox = document.getElementById("saveQueueBox");
+const saveQueueInput = document.getElementById("saveQueueInput");
+const saveQueueGo = document.getElementById("saveQueueGo");
+
+saveQueueBtn.addEventListener("click", function () {
+  if (queue.length === 0) {
+    showSkipNote("Nothing queued yet. Play something first.");
+    return;
+  }
+  saveQueueBox.hidden = false;
+  saveQueueInput.value = "";
+  saveQueueInput.focus();
+});
+
+function commitSaveQueue() {
+  const name = saveQueueInput.value.trim();
+  if (!name) {
+    return;
+  }
+  playlists.push({
+    id: "p" + Date.now(),
+    name: name,
+    tracks: queue.map(trackSummary)
+  });
+  savePlaylists();
+  renderPlaylistNav();
+  saveQueueBox.hidden = true;
+  showSkipNote("Saved as \"" + name + "\".");
+}
+
+saveQueueGo.addEventListener("click", commitSaveQueue);
+saveQueueInput.addEventListener("keydown", function (event) {
+  if (event.key === "Enter") {
+    commitSaveQueue();
+  }
+  if (event.key === "Escape") {
+    saveQueueBox.hidden = true;
+  }
+});
+
+// ===== 25.5 Radio mode (endless similar songs) =====
+
+// When the queue runs out and radio is on, Sonara keeps playing by
+// itself: same genre first, then same mood, then plain trending.
+// Songs from your last 20 plays never repeat.
+let radioOn = false;
+try {
+  radioOn = localStorage.getItem("sonara-radio") === "1";
+} catch (error) {
+  // Private mode: radio just starts off.
+}
+
+const radioBtn = document.getElementById("radioBtn");
+
+function applyRadio() {
+  radioBtn.classList.toggle("on", radioOn);
+  radioBtn.setAttribute("aria-label", radioOn
+    ? "Radio on: endless similar songs"
+    : "Radio: endless similar songs");
+}
+
+radioBtn.addEventListener("click", function () {
+  radioOn = !radioOn;
+  try {
+    localStorage.setItem("sonara-radio", radioOn ? "1" : "0");
+  } catch (error) {
+    // Choice lasts for this session only.
+  }
+  applyRadio();
+  showSkipNote(radioOn
+    ? "Radio on. Similar songs will keep playing."
+    : "Radio off.");
+});
+applyRadio();
+
+// Called when a track ends: next in queue, radio, or stop.
+function advanceTrack() {
+  if (currentIndex + 1 < queue.length) {
+    nextTrack();
+    return;
+  }
+  if (radioOn) {
+    radioNext();
+    return;
+  }
+  statsPlayStop(); // queue over: close the books on this listen
+}
+
+function radioNext() {
+  const last = queue[currentIndex];
+  if (!last || trendingTracks.length === 0) {
+    showSkipNote("Radio needs the trending list. Check your connection.");
+    statsPlayStop();
+    return;
+  }
+  // Everything played lately is off-limits, so radio never loops.
+  const recentIds = {};
+  loadRecent().forEach(function (t) {
+    recentIds[String(t.id)] = true;
+  });
+  queue.forEach(function (t) {
+    recentIds[String(t.id)] = true;
+  });
+
+  function fresh(list) {
+    const pool = list.filter(function (t) {
+      // v0.5: hidden songs never reach the radio either.
+      return !recentIds[String(t.id)] && !isHiddenId(t.id);
+    });
+    if (pool.length === 0) {
+      return null;
+    }
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  let pick = null;
+  if (last.genre) {
+    pick = fresh(trendingTracks.filter(function (t) {
+      return t.genre === last.genre;
+    }));
+  }
+  if (!pick && last.mood) {
+    pick = fresh(trendingTracks.filter(function (t) {
+      return t.mood === last.mood;
+    }));
+  }
+  if (!pick) {
+    pick = fresh(trendingTracks);
+  }
+  if (!pick) {
+    showSkipNote("Radio ran out of fresh songs for now.");
+    statsPlayStop();
+    return;
+  }
+  queue.push(pick);
+  currentIndex = queue.length - 1;
+  playCurrent();
+}
+
+
+// ===== 25.6 Playback speed =====
+
+// 1x, 1.25x, 1.5x, 2x, back to 1x. The rate sticks to both audio
+// elements (crossfade swaps between them) and is remembered.
+const SPEEDS = [1, 1.25, 1.5, 2];
+let speedIdx = 0;
+try {
+  const saved = parseFloat(localStorage.getItem("sonara-speed"));
+  const found = SPEEDS.indexOf(saved);
+  if (found !== -1) {
+    speedIdx = found;
+  }
+} catch (error) {
+  // Private mode: speed just starts at 1x.
+}
+
+const speedBtn = document.getElementById("speedBtn");
+
+function applySpeed() {
+  audio.playbackRate = SPEEDS[speedIdx];
+  audioX.playbackRate = SPEEDS[speedIdx];
+  speedBtn.textContent = SPEEDS[speedIdx] + "x";
+  speedBtn.classList.toggle("fast", speedIdx !== 0);
+  speedBtn.setAttribute("aria-label",
+    "Playback speed " + SPEEDS[speedIdx] + "x");
+}
+
+speedBtn.addEventListener("click", function () {
+  speedIdx = (speedIdx + 1) % SPEEDS.length;
+  try {
+    localStorage.setItem("sonara-speed", String(SPEEDS[speedIdx]));
+  } catch (error) {
+    // Choice lasts for this session only.
+  }
+  applySpeed();
+});
+applySpeed();
+
+// ===== 25.7 Library: Songs, Artists, Playlists in tabs =====
+
+// Three tabs over what you kept: liked songs, the artists behind
+// them (plus your history), and every playlist including the
+// virtual ones. Tapping an artist filters the Songs tab to them.
+const libraryView = document.getElementById("libraryView");
+const libraryList = document.getElementById("libraryList");
+const libraryMessage = document.getElementById("libraryMessage");
+const libTabSongs = document.getElementById("libTabSongs");
+const libTabArtists = document.getElementById("libTabArtists");
+const libTabPlaylists = document.getElementById("libTabPlaylists");
+const libTabHidden = document.getElementById("libTabHidden");
+const libArtistFilter = document.getElementById("libArtistFilter");
+
+let libTab = "songs";
+let libArtistName = null; // artist currently filtering the Songs tab
+
+function setLibTab(tab) {
+  libTab = tab;
+  libArtistName = null;
+  renderLibrary();
+}
+
+libTabSongs.addEventListener("click", function () { setLibTab("songs"); });
+libTabArtists.addEventListener("click", function () { setLibTab("artists"); });
+libTabPlaylists.addEventListener("click", function () { setLibTab("playlists"); });
+libTabHidden.addEventListener("click", function () { setLibTab("hidden"); });
+
+// One artist, and every liked or once-played song of theirs we know.
+function libraryArtists() {
+  const map = {};
+  function add(name, summary) {
+    if (!name) {
+      return;
+    }
+    const key = name.toLowerCase();
+    if (!map[key]) {
+      map[key] = { name: name, tracks: [] };
+    }
+    if (!map[key].tracks.some(function (t) {
+      return String(t.id) === String(summary.id);
+    })) {
+      map[key].tracks.push(summary);
+    }
+  }
+  likedTracks.forEach(function (t) {
+    add(artistName(t), trackSummary(t));
+  });
+  const stats = loadStats();
+  Object.keys(stats).forEach(function (k) {
+    add(stats[k].artist, stats[k]);
+  });
+  return Object.keys(map).map(function (k) {
+    return map[k];
+  }).sort(function (a, b) {
+    return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1;
+  });
+}
+
+// One row: artwork, title, artist. Tapping plays just that song.
+function libSongRow(summary) {
+  const row = document.createElement("div");
+  row.className = "queue-row";
+  row.tabIndex = 0;
+  row.setAttribute("role", "button");
+  row.setAttribute("aria-label", "Play " + summary.title);
+
+  const art = document.createElement("div");
+  art.className = "q-art";
+  const url = summary.artwork ? summary.artwork["150x150"] : null;
+  if (url) {
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "";
+    img.onerror = function () {
+      art.innerHTML = "";
+      art.appendChild(noteIcon());
+    };
+    art.appendChild(img);
+  } else {
+    art.appendChild(noteIcon());
+  }
+  row.appendChild(art);
+
+  const text = document.createElement("div");
+  text.className = "q-text";
+  const title = document.createElement("div");
+  title.className = "q-title";
+  title.textContent = summary.title;
+  const artist = document.createElement("div");
+  artist.className = "q-artist";
+  artist.textContent = summary.artist;
+  text.appendChild(title);
+  text.appendChild(artist);
+  row.appendChild(text);
+
+  row.appendChild(likeButton(summary, "like-btn"));
+
+  function play() {
+    startQueue([{
+      id: summary.id,
+      title: summary.title,
+      user: { name: summary.artist },
+      artwork: summary.artwork,
+      is_downloadable: summary.is_downloadable === true,
+      download: summary.download || null
+    }], 0);
+  }
+  row.addEventListener("click", play);
+  row.addEventListener("keydown", function (event) {
+    // The heart handles its own keys.
+    if (event.target !== row) {
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      play();
+    }
+  });
+  return row;
+}
+
+function renderLibrary() {
+  [libTabSongs, libTabArtists, libTabPlaylists, libTabHidden].forEach(function (b) {
+    b.classList.remove("active");
+  });
+  ({ songs: libTabSongs, artists: libTabArtists, playlists: libTabPlaylists, hidden: libTabHidden })[libTab].classList.add("active");
+
+  libraryList.innerHTML = "";
+  libArtistFilter.hidden = true;
+
+  // v0.5: hidden songs live here with an Unhide button each.
+  if (libTab === "hidden") {
+    renderHiddenTab();
+    return;
+  }
+
+  if (libTab === "songs") {
+    let list = likedTracks;
+    if (libArtistName) {
+      list = list.filter(function (t) {
+        return artistName(t) === libArtistName;
+      });
+      libArtistFilter.hidden = false;
+      libArtistFilter.innerHTML = "";
+      libArtistFilter.appendChild(document.createTextNode(
+        "Showing songs by " + libArtistName + " "));
+      const clear = document.createElement("button");
+      clear.className = "text-btn";
+      clear.textContent = "Clear";
+      clear.addEventListener("click", function () {
+        libArtistName = null;
+        renderLibrary();
+      });
+      libArtistFilter.appendChild(clear);
+    }
+    libraryMessage.hidden = list.length > 0;
+    if (list.length === 0 && !libArtistName) {
+      libraryMessage.textContent =
+        "Tap the heart on any song to start your library.";
+    }
+    list.forEach(function (t) {
+      libraryList.appendChild(libSongRow(t));
+    });
+    return;
+  }
+
+  if (libTab === "artists") {
+    const artists = libraryArtists();
+    libraryMessage.hidden = artists.length > 0;
+    if (artists.length === 0) {
+      libraryMessage.textContent =
+        "No artists yet. Like songs or play music first.";
+    }
+    artists.forEach(function (a) {
+      const row = document.createElement("button");
+      row.className = "queue-row";
+      const text = document.createElement("div");
+      text.className = "q-text";
+      const name = document.createElement("div");
+      name.className = "q-title";
+      name.textContent = a.name;
+      const count = document.createElement("div");
+      count.className = "q-artist";
+      count.textContent = a.tracks.length +
+        (a.tracks.length === 1 ? " song" : " songs");
+      text.appendChild(name);
+      text.appendChild(count);
+      row.appendChild(text);
+      row.addEventListener("click", function () {
+        libArtistName = a.name;
+        libTab = "songs";
+        renderLibrary();
+      });
+      libraryList.appendChild(row);
+    });
+    return;
+  }
+
+  // Playlists tab: your playlists plus the virtual ones.
+  libraryMessage.hidden = true;
+  const entries = [
+    { id: "liked", name: "Liked Songs", sub: likedTracks.length + " songs" },
+    { id: "mix", name: "Weekly Mix", sub: loadMix().tracks.length + " songs" },
+    // v0.5: the two new auto mixes pin here as well.
+    { id: "daylist", name: "Daylist", sub: loadDaylist().tracks.length + " songs" },
+    { id: "discover", name: "Discover Mix", sub: loadDiscoverMix().tracks.length + " songs" }
+  ].concat(playlists.map(function (p) {
+    return {
+      id: p.id,
+      name: p.name,
+      sub: p.tracks.length + (p.tracks.length === 1 ? " song" : " songs")
+    };
+  }));
+  entries.forEach(function (e) {
+    const row = document.createElement("button");
+    row.className = "queue-row";
+    const text = document.createElement("div");
+    text.className = "q-text";
+    const name = document.createElement("div");
+    name.className = "q-title";
+    name.textContent = e.name;
+    const sub = document.createElement("div");
+    sub.className = "q-artist";
+    sub.textContent = e.sub;
+    text.appendChild(name);
+    text.appendChild(sub);
+    row.appendChild(text);
+    row.addEventListener("click", function () {
+      showPlaylist(e.id);
+    });
+    libraryList.appendChild(row);
+  });
+}
+
+// ===== 25.8 Track story: "about this artist" (Wikipedia, free) =====
+
+// Every artist name goes to Wikipedia's free summary API. No key,
+// no account. The panel reuses the app's modal dialog, and every
+// string is set as textContent so nothing from the web can run.
+const aboutBtn = document.getElementById("aboutBtn");
+
+aboutBtn.addEventListener("click", function () {
+  const track = queue[currentIndex];
+  if (!track) {
+    showSkipNote("Play a song first.");
+    return;
+  }
+  const name = artistName(track);
+  openModal("About " + name);
+  const loading = document.createElement("p");
+  loading.className = "message";
+  loading.textContent = "Finding the story...";
+  modalBody.appendChild(loading);
+
+  fetch("https://en.wikipedia.org/api/rest_v1/page/summary/" +
+      encodeURIComponent(name))
+    .then(function (response) {
+      if (!response.ok) {
+        throw new Error("no story");
+      }
+      return response.json();
+    })
+    .then(function (json) {
+      if (!json || !json.extract) {
+        throw new Error("no story");
+      }
+      modalBody.innerHTML = "";
+      if (json.thumbnail && json.thumbnail.source) {
+        const img = document.createElement("img");
+        img.className = "story-thumb";
+        img.src = json.thumbnail.source;
+        img.alt = "";
+        modalBody.appendChild(img);
+      }
+      const heading = document.createElement("h3");
+      heading.textContent = json.title || name;
+      modalBody.appendChild(heading);
+      const text = document.createElement("p");
+      text.className = "story-extract";
+      text.textContent = json.extract;
+      modalBody.appendChild(text);
+    })
+    .catch(function () {
+      modalBody.innerHTML = "";
+      const none = document.createElement("p");
+      none.className = "message";
+      none.textContent = "No story found for this artist.";
+      modalBody.appendChild(none);
+    });
+});
+
+
+// ===== 25.9 Share links (anyone can open them) =====
+
+// Song.link turns an Audius page into one link that opens in
+// whatever music app the friend has. Free, no key. When it fails,
+// the plain Audius link goes to the clipboard instead.
+const shareBtn = document.getElementById("shareBtn");
+
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(function () {
+      fallbackCopy(text);
+    });
+    return;
+  }
+  fallbackCopy(text);
+}
+
+// Old-school copy for browsers where the clipboard API is blocked.
+function fallbackCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand("copy");
+  } catch (error) {
+    // Nothing more we can do; the note below still tells the truth.
+  }
+  document.body.removeChild(ta);
+}
+
+shareBtn.addEventListener("click", function () {
+  const track = queue[currentIndex];
+  if (!track) {
+    showSkipNote("Play a song first.");
+    return;
+  }
+  // Saved downloads and local files have no web page to share.
+  if (!track.permalink) {
+    showSkipNote("No share link for this song.");
+    return;
+  }
+  const audiusUrl = "https://audius.co" + track.permalink;
+  fetch("https://api.song.link/v1-alpha.1/links?url=" +
+      encodeURIComponent(audiusUrl) + "&userCountry=US")
+    .then(function (response) {
+      if (!response.ok) {
+        throw new Error("no match");
+      }
+      return response.json();
+    })
+    .then(function (json) {
+      copyText((json && json.pageUrl) || audiusUrl);
+      showSkipNote("Link copied. Send it to anyone.");
+    })
+    .catch(function () {
+      copyText(audiusUrl);
+      showSkipNote("Link copied. Send it to anyone.");
+    });
+});
+
+// ===== 25.10 Lyric display styles =====
+
+// Three looks for the synced line, picked right in the Lyrics view.
+// The choice is remembered. Only the active line changes; the
+// lyrics engine itself is untouched.
+const LYRIC_STYLE_KEY = "sonara-lyric-style";
+const LYRIC_STYLES = ["glow", "fade", "rise"];
+let lyricStyle = "glow";
+try {
+  const saved = localStorage.getItem(LYRIC_STYLE_KEY);
+  if (LYRIC_STYLES.indexOf(saved) !== -1) {
+    lyricStyle = saved;
+  }
+} catch (error) {
+  // Private mode: the style just starts at Glow.
+}
+
+function applyLyricStyle() {
+  lyricsLines.className = "lyrics lyr-" + lyricStyle;
+  document.querySelectorAll(".lyr-style-btn").forEach(function (b) {
+    b.classList.toggle("active", b.dataset.style === lyricStyle);
+  });
+}
+
+document.querySelectorAll(".lyr-style-btn").forEach(function (b) {
+  b.addEventListener("click", function () {
+    lyricStyle = b.dataset.style;
+    try {
+      localStorage.setItem(LYRIC_STYLE_KEY, lyricStyle);
+    } catch (error) {
+      // Choice lasts for this session only.
+    }
+    applyLyricStyle();
+  });
+});
+applyLyricStyle();
+
+
+// ===== 25.11 Smart playback: ears on the Mac itself =====
+
+// (a) Electron only: every 3 seconds the Mac app asks macOS whether
+// the system output is muted. The moment it is, while music plays,
+// Sonara pauses and says why. It never resumes by itself: unmuting
+// is the user's own "I'm back", and they press play when ready.
+if (window.sonara && window.sonara.onSystemMuted) {
+  window.sonara.onSystemMuted(function (muted) {
+    if (muted && !activeAudio.paused) {
+      activeAudio.pause();
+      showSkipNote("Paused: your Mac is muted.");
+    }
+  });
+}
+
+// (b) Both platforms: when the list of audio outputs shrinks while
+// music plays, the headphones (or speaker) just left. Pause and
+// remember; when an output comes back, resume where we left off.
+let devicePaused = false;
+let lastOutputCount = -1;
+
+async function countAudioOutputs() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices.filter(function (d) {
+      return d.kind === "audiooutput";
+    }).length;
+  } catch (error) {
+    return -1; // counting failed: stay out of the way
+  }
+}
+
+if (navigator.mediaDevices &&
+    typeof navigator.mediaDevices.addEventListener === "function") {
+  navigator.mediaDevices.addEventListener("devicechange", async function () {
+    const now = await countAudioOutputs();
+    if (now === -1 || lastOutputCount === -1) {
+      if (now !== -1) {
+        lastOutputCount = now;
+      }
+      return;
+    }
+    if (now < lastOutputCount && !activeAudio.paused) {
+      activeAudio.pause();
+      devicePaused = true;
+      showSkipNote("Paused: headphones disconnected.");
+    } else if (now > lastOutputCount && devicePaused) {
+      devicePaused = false;
+      activeAudio.play().catch(function () {
+        // The browser said no (autoplay rules): the user presses play.
+      });
+      showSkipNote("Headphones back. Resuming.");
+    }
+    lastOutputCount = now;
+  });
+  countAudioOutputs().then(function (n) {
+    if (n !== -1) {
+      lastOutputCount = n;
+    }
+  });
+}
+
+
+// ---------- 26. v0.5: 9 new features (step 4) ----------
+
+// A second wave borrowed from the famous music apps, rebuilt for a free
+// app with no login and no server: Spotify (Daylist, Smart Shuffle,
+// folders, DJ voice, Hide), YouTube Music (Offline Mixtape, Discover
+// Mix, Recap), JioSaavn (language charts). Plain JavaScript, zero new
+// dependencies, comments on every section.
+
+
+// ===== 26.0 Shared handles and helpers =====
+
+const chartsView = document.getElementById("chartsView");
+const chartPills = document.getElementById("chartPills");
+const chartsGrid = document.getElementById("chartsGrid");
+const chartsMessage = document.getElementById("chartsMessage");
+const folderNav = document.getElementById("folderNav");
+const newFolderBtn = document.getElementById("newFolderBtn");
+const folderNew = document.getElementById("folderNew");
+const folderNameInput = document.getElementById("folderNameInput");
+const folderMoveBtn = document.getElementById("folderMoveBtn");
+const folderMenu = document.getElementById("folderMenu");
+const mixtapeBtn = document.getElementById("mixtapeBtn");
+const mixtapeStatus = document.getElementById("mixtapeStatus");
+const shuffleBtn = document.getElementById("shuffleBtn");
+const smartShuffleBtn = document.getElementById("smartShuffleBtn");
+
+// The two virtual auto-mixes from this step.
+function isVirtualMixId(id) {
+  return id === "daylist" || id === "discover";
+}
+
+
+// ===== 26.1 Daylist (Spotify-style, rebuilt from your own data) =====
+
+// A playlist that changes with the time of day. The scoring is honest:
+// your play counts, your likes, and each track's real BPM against the
+// daypart's tempo. Nothing is faked.
+const DAYLIST_KEY = "sonara-daylist";
+const DAYPARTS = [
+  { id: "morning", name: "Morning Calm", start: 5, end: 11, bpmMax: 100 },
+  { id: "midday", name: "Midday Focus", start: 11, end: 16, bpmMin: 90, bpmMax: 125 },
+  { id: "evening", name: "Evening Energy", start: 16, end: 21, bpmMin: 115 },
+  { id: "night", name: "Night Unwind", start: 21, end: 29, bpmMax: 95 }
+];
+
+function currentDaypart() {
+  const h = new Date().getHours();
+  for (let i = 0; i < DAYPARTS.length; i++) {
+    const p = DAYPARTS[i];
+    const inside = p.end <= 24
+      ? (h >= p.start && h < p.end)
+      : (h >= p.start || h < p.end - 24);
+    if (inside) {
+      return p;
+    }
+  }
+  return DAYPARTS[3];
+}
+
+function loadDaylist() {
+  try {
+    const raw = localStorage.getItem(DAYLIST_KEY);
+    const dl = raw ? JSON.parse(raw) : null;
+    if (dl && dl.daypart && Array.isArray(dl.tracks)) {
+      return dl;
+    }
+  } catch (error) {
+    // Corrupt entry: fall through to an empty one.
+  }
+  return { daypart: "", label: "", builtAt: 0, tracks: [] };
+}
+
+function saveDaylist(dl) {
+  try {
+    localStorage.setItem(DAYLIST_KEY, JSON.stringify(dl));
+  } catch (error) {
+    // Storage full or blocked: the daylist simply does not persist.
+  }
+}
+
+// Tiny seeded random so a daypart's order feels made, not reshuffled
+// on every open.
+function seededRandom(seed) {
+  let s = seed >>> 0;
+  return function () {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+function daypartScore(track, stats, part) {
+  let score = 0;
+  const id = String(track.id);
+  if (stats[id]) {
+    score += stats[id].plays * 2;
+  }
+  for (let i = 0; i < likedTracks.length; i++) {
+    if (String(likedTracks[i].id) === id) {
+      score += 3;
+      break;
+    }
+  }
+  const bpm = parseInt(track.bpm, 10);
+  if (bpm > 0) {
+    const fitsMin = !part.bpmMin || bpm >= part.bpmMin - 10;
+    const fitsMax = !part.bpmMax || bpm <= part.bpmMax + 10;
+    score += (fitsMin && fitsMax) ? 2 : -1;
+  }
+  return score;
+}
+
+function buildDaylist() {
+  const part = currentDaypart();
+  const stats = loadStats();
+  const seen = {};
+  const scored = [];
+  const recentIds = {};
+  loadRecent().forEach(function (t) {
+    recentIds[String(t.id)] = true;
+  });
+
+  function consider(track) {
+    const id = String(track.id);
+    if (!id || seen[id] || recentIds[id] || isHiddenId(track.id)) {
+      return;
+    }
+    seen[id] = true;
+    scored.push({
+      track: trackSummary(track),
+      score: daypartScore(track, stats, part)
+    });
+  }
+  likedTracks.forEach(consider);
+  trendingTracks.forEach(consider);
+
+  scored.sort(function (a, b) {
+    return b.score - a.score;
+  });
+  const picks = scored.slice(0, 30).map(function (s) {
+    return s.track;
+  });
+  // Stable order per daypart: same morning, same list.
+  const rand = seededRandom(part.start * 100 + new Date().getDate());
+  for (let i = picks.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const tmp = picks[i];
+    picks[i] = picks[j];
+    picks[j] = tmp;
+  }
+  return {
+    daypart: part.id,
+    label: part.name,
+    builtAt: Date.now(),
+    tracks: picks
+  };
+}
+
+// Fresh when the daypart changed, when empty, or when older than 6h.
+function getDaylist() {
+  const part = currentDaypart();
+  const dl = loadDaylist();
+  if (!dl.tracks.length || dl.daypart !== part.id ||
+      Date.now() - dl.builtAt > 6 * 3600 * 1000) {
+    const fresh = buildDaylist();
+    // Only stamp the build time when we actually found songs, so an
+    // early empty build (trending not loaded yet) retries next time.
+    if (fresh.tracks.length > 0) {
+      saveDaylist(fresh);
+    }
+    return fresh;
+  }
+  return dl;
+}
+
+
+// ===== 26.2 Smart Shuffle (Spotify-style, suggestions included) =====
+
+// Plain shuffle keeps the current song first and mixes the rest.
+// Smart shuffle additionally slips a recommended song in about every
+// four tracks, marked "Suggested" so it never feels sneaky.
+let smartShuffleOn = false;
+try {
+  smartShuffleOn = localStorage.getItem("sonara-smart-shuffle") === "1";
+} catch (error) {
+  // Private mode: the toggle just works for this session.
+}
+
+// Your three most-liked genres, for suggestion picks.
+function likedGenres() {
+  const counts = {};
+  likedTracks.forEach(function (t) {
+    if (t.genre) {
+      counts[t.genre] = (counts[t.genre] || 0) + 1;
+    }
+  });
+  return Object.keys(counts).sort(function (a, b) {
+    return counts[b] - counts[a];
+  }).slice(0, 3);
+}
+
+// One recommended track: trending, in a liked genre, not hidden, not
+// played lately, not already queued.
+function pickSuggested(queuedIds) {
+  if (trendingTracks.length === 0) {
+    return null;
+  }
+  const genres = likedGenres();
+  const recentIds = {};
+  loadRecent().forEach(function (t) {
+    recentIds[String(t.id)] = true;
+  });
+  const pool = trendingTracks.filter(function (t) {
+    const id = String(t.id);
+    return !queuedIds[id] && !recentIds[id] && !isHiddenId(t.id) &&
+      (genres.length === 0 || genres.indexOf(t.genre) !== -1);
+  });
+  if (pool.length === 0) {
+    return null;
+  }
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  const summary = trackSummary(pick);
+  summary._suggested = true; // transient flag for the "Suggested" tag
+  return summary;
+}
+
+function shuffleQueue() {
+  if (queue.length < 2) {
+    showSkipNote("Not enough songs to shuffle.");
+    return;
+  }
+  const current = queue[currentIndex];
+  const rest = [];
+  for (let i = 0; i < queue.length; i++) {
+    if (i !== currentIndex) {
+      rest.push(queue[i]);
+    }
+  }
+  for (let i = rest.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = rest[i];
+    rest[i] = rest[j];
+    rest[j] = tmp;
+  }
+  let out = [current].concat(rest);
+  if (smartShuffleOn) {
+    const withSuggestions = [];
+    const queuedIds = {};
+    out.forEach(function (t) {
+      queuedIds[String(t.id)] = true;
+    });
+    let sinceSuggestion = 0;
+    out.forEach(function (t) {
+      withSuggestions.push(t);
+      sinceSuggestion++;
+      if (sinceSuggestion >= 4) {
+        const s = pickSuggested(queuedIds);
+        if (s) {
+          withSuggestions.push(s);
+          queuedIds[String(s.id)] = true;
+        }
+        sinceSuggestion = 0;
+      }
+    });
+    out = withSuggestions;
+  }
+  queue = out;
+  currentIndex = 0;
+  renderQueue();
+  showSkipNote(smartShuffleOn
+    ? "Shuffled, with a few suggestions mixed in."
+    : "Queue shuffled.");
+}
+
+function applySmartShuffleBtn() {
+  smartShuffleBtn.textContent = "Smart shuffle: " + (smartShuffleOn ? "on" : "off");
+  smartShuffleBtn.setAttribute("aria-pressed", smartShuffleOn ? "true" : "false");
+}
+
+shuffleBtn.addEventListener("click", shuffleQueue);
+smartShuffleBtn.addEventListener("click", function () {
+  smartShuffleOn = !smartShuffleOn;
+  try {
+    localStorage.setItem("sonara-smart-shuffle", smartShuffleOn ? "1" : "0");
+  } catch (error) {
+    // Session-only then.
+  }
+  applySmartShuffleBtn();
+  showSkipNote(smartShuffleOn
+    ? "Smart shuffle on: suggestions will join the mix."
+    : "Smart shuffle off.");
+});
+applySmartShuffleBtn();
+
+
+// ===== 26.3 Playlist folders (Spotify-style organization) =====
+
+// Folders group playlists in the sidebar. Moving a playlist into a
+// folder never deletes or changes it; only its shelf changes.
+const FOLDERS_KEY = "sonara-folders";
+const folderOpen = {}; // in-memory expand state, collapsed by default
+
+function loadFolders() {
+  try {
+    const raw = localStorage.getItem(FOLDERS_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveFolders(folders) {
+  try {
+    localStorage.setItem(FOLDERS_KEY, JSON.stringify(folders));
+  } catch (error) {
+    // Session-only then.
+  }
+}
+
+function isPlaylistFiled(pid) {
+  return loadFolders().some(function (f) {
+    return f.playlistIds.indexOf(pid) !== -1;
+  });
+}
+
+function folderOfPlaylist(pid) {
+  const folders = loadFolders();
+  for (let i = 0; i < folders.length; i++) {
+    if (folders[i].playlistIds.indexOf(pid) !== -1) {
+      return folders[i];
+    }
+  }
+  return null;
+}
+
+function renderFolderNav() {
+  folderNav.innerHTML = "";
+  loadFolders().forEach(function (f) {
+    const members = f.playlistIds.map(findPlaylist).filter(function (p) {
+      return !!p;
+    });
+    const row = document.createElement("button");
+    row.className = "nav-btn folder-row";
+    const caret = document.createElement("span");
+    caret.className = "folder-caret";
+    caret.textContent = folderOpen[f.id] ? "▾" : "▸";
+    row.appendChild(caret);
+    const name = document.createElement("span");
+    name.textContent = f.name;
+    row.appendChild(name);
+    const count = document.createElement("span");
+    count.className = "count";
+    count.textContent = members.length;
+    row.appendChild(count);
+    row.setAttribute("aria-label", "Folder " + f.name);
+    row.addEventListener("click", function () {
+      folderOpen[f.id] = !folderOpen[f.id];
+      renderFolderNav();
+    });
+    folderNav.appendChild(row);
+
+    if (folderOpen[f.id]) {
+      members.forEach(function (pl) {
+        const b = document.createElement("button");
+        b.className = "nav-btn playlist-btn folder-item";
+        b.dataset.pid = pl.id;
+        const n = document.createElement("span");
+        n.textContent = pl.name;
+        b.appendChild(n);
+        const c = document.createElement("span");
+        c.className = "count";
+        c.textContent = pl.tracks.length;
+        b.appendChild(c);
+        b.addEventListener("click", function () {
+          showPlaylist(pl.id);
+        });
+        folderNav.appendChild(b);
+      });
+    }
+  });
+}
+
+// New folder: the same inline pattern as new playlists.
+newFolderBtn.addEventListener("click", function () {
+  folderNew.hidden = false;
+  folderNameInput.value = "";
+  folderNameInput.focus();
+});
+
+folderNameInput.addEventListener("keydown", function (event) {
+  if (event.key === "Enter") {
+    const name = folderNameInput.value.trim();
+    if (name) {
+      const folders = loadFolders();
+      folders.push({ id: "f" + Date.now(), name: name, playlistIds: [] });
+      saveFolders(folders);
+      folderNew.hidden = true;
+      renderPlaylistNav();
+      showSkipNote("Folder created.");
+    }
+  }
+  if (event.key === "Escape") {
+    folderNew.hidden = true;
+  }
+});
+
+function movePlaylistToFolder(pid, folderId) {
+  const folders = loadFolders();
+  folders.forEach(function (f) {
+    f.playlistIds = f.playlistIds.filter(function (x) {
+      return x !== pid;
+    });
+    if (folderId && f.id === folderId) {
+      f.playlistIds.push(pid);
+    }
+  });
+  saveFolders(folders);
+  renderPlaylistNav();
+  showSkipNote(folderId ? "Moved to folder." : "Taken out of its folder.");
+}
+
+// "Move to folder" for the open playlist. Virtual playlists never
+// show this button (hidden in their render paths).
+folderMoveBtn.addEventListener("click", function (event) {
+  event.stopPropagation();
+  const pl = findPlaylist(openPlaylistId);
+  if (!pl) {
+    return;
+  }
+  folderMenu.innerHTML = "";
+  const folders = loadFolders();
+  if (folders.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "add-menu-empty";
+    empty.textContent = "No folders yet. Make one with the + next to Folders.";
+    folderMenu.appendChild(empty);
+  }
+  folders.forEach(function (f) {
+    const item = document.createElement("button");
+    item.className = "add-menu-item";
+    item.textContent = f.name;
+    item.addEventListener("click", function () {
+      movePlaylistToFolder(pl.id, f.id);
+      folderMenu.hidden = true;
+    });
+    folderMenu.appendChild(item);
+  });
+  const filed = folderOfPlaylist(pl.id);
+  if (filed) {
+    const out = document.createElement("button");
+    out.className = "add-menu-item";
+    out.textContent = "Remove from folder";
+    out.addEventListener("click", function () {
+      movePlaylistToFolder(pl.id, null);
+      folderMenu.hidden = true;
+    });
+    folderMenu.appendChild(out);
+  }
+  const r = folderMoveBtn.getBoundingClientRect();
+  folderMenu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 240)) + "px";
+  folderMenu.style.top = (r.bottom + 6) + "px";
+  folderMenu.hidden = false;
+});
+
+document.addEventListener("click", function () {
+  folderMenu.hidden = true;
+});
+
+
+// ===== 26.4 DJ voice (a free radio-DJ announcement) =====
+
+// Spotify's AI DJ needs a server. Ours uses the Mac's own built-in
+// voices through the browser's free speech engine: no key, no cost,
+// nothing leaves the computer.
+let djVoiceOn = false;
+let djVoiceURI = "";
+try {
+  djVoiceOn = localStorage.getItem("sonara-dj-voice") === "1";
+  djVoiceURI = localStorage.getItem("sonara-dj-voice-uri") || "";
+} catch (error) {
+  // Private mode: the toggle just works for this session.
+}
+
+let djSavedVolume = null; // [audio, audioX] volumes while ducked
+
+function djDuck() {
+  djSavedVolume = [audio.volume, audioX.volume];
+  audio.volume = Math.max(0.05, audio.volume * 0.3);
+  audioX.volume = Math.max(0.05, audioX.volume * 0.3);
+}
+
+function djRestore() {
+  if (djSavedVolume) {
+    audio.volume = djSavedVolume[0];
+    audioX.volume = djSavedVolume[1];
+    djSavedVolume = null;
+  }
+}
+
+function djCancel() {
+  if ("speechSynthesis" in window) {
+    try {
+      speechSynthesis.cancel();
+    } catch (error) {
+      // Nothing was speaking.
+    }
+  }
+  djRestore();
+}
+
+function pickDjVoice() {
+  if (!("speechSynthesis" in window)) {
+    return null;
+  }
+  const voices = speechSynthesis.getVoices();
+  for (let i = 0; i < voices.length; i++) {
+    if (voices[i].voiceURI === djVoiceURI) {
+      return voices[i];
+    }
+  }
+  for (let i = 0; i < voices.length; i++) {
+    if (voices[i].lang && voices[i].lang.indexOf("en") === 0) {
+      return voices[i];
+    }
+  }
+  return voices[0] || null;
+}
+
+// Called from playCurrent: one short announcement per track start,
+// never over a paused player.
+function djAnnounce(track) {
+  if (!djVoiceOn || !("speechSynthesis" in window) || !track) {
+    return;
+  }
+  djRestore(); // close out any previous announcement first
+  djCancel();
+  const u = new SpeechSynthesisUtterance(
+    "Now playing: " + track.title + " by " + artistName(track));
+  const voice = pickDjVoice();
+  if (voice) {
+    u.voice = voice;
+  }
+  u.onend = djRestore;
+  u.onerror = djRestore;
+  djDuck();
+  try {
+    speechSynthesis.speak(u);
+  } catch (error) {
+    djRestore(); // speech blocked: never leave the volume ducked
+  }
+}
+
+// Pausing or a track change never leaves a voice talking.
+[audio, audioX].forEach(function (el) {
+  el.addEventListener("pause", djCancel);
+});
+
+// The DJ controls live in the Sound panel, next to crossfade.
+function appendDjVoiceRows(menu) {
+  const title = document.createElement("div");
+  title.className = "sound-title";
+  title.textContent = "DJ voice";
+  menu.appendChild(title);
+
+  const row = document.createElement("div");
+  row.className = "xfade-row";
+  const label = document.createElement("span");
+  label.textContent = "Announce each track";
+  const toggle = document.createElement("input");
+  toggle.type = "checkbox";
+  toggle.checked = djVoiceOn;
+  toggle.setAttribute("aria-label", "DJ voice announcements");
+  toggle.addEventListener("change", function () {
+    djVoiceOn = toggle.checked;
+    try {
+      localStorage.setItem("sonara-dj-voice", djVoiceOn ? "1" : "0");
+    } catch (error) {
+      // Session-only then.
+    }
+    if (!djVoiceOn) {
+      djCancel();
+    }
+  });
+  row.appendChild(label);
+  row.appendChild(toggle);
+  menu.appendChild(row);
+
+  const vrow = document.createElement("div");
+  vrow.className = "xfade-row";
+  const vlabel = document.createElement("span");
+  vlabel.textContent = "Voice";
+  const sel = document.createElement("select");
+  sel.setAttribute("aria-label", "DJ voice choice");
+  function fillVoices() {
+    sel.innerHTML = "";
+    const voices = ("speechSynthesis" in window)
+      ? speechSynthesis.getVoices() : [];
+    if (voices.length === 0) {
+      const o = document.createElement("option");
+      o.textContent = "Default voice";
+      sel.appendChild(o);
+      return;
+    }
+    voices.forEach(function (v) {
+      const o = document.createElement("option");
+      o.value = v.voiceURI;
+      o.textContent = v.name + " (" + v.lang + ")";
+      if (v.voiceURI === djVoiceURI) {
+        o.selected = true;
+      }
+      sel.appendChild(o);
+    });
+  }
+  fillVoices();
+  // System voices can arrive late; refill if the menu is still open.
+  if ("speechSynthesis" in window && speechSynthesis.addEventListener) {
+    speechSynthesis.addEventListener("voiceschanged", fillVoices);
+  }
+  sel.addEventListener("change", function () {
+    djVoiceURI = sel.value;
+    try {
+      localStorage.setItem("sonara-dj-voice-uri", djVoiceURI);
+    } catch (error) {
+      // Session-only then.
+    }
+  });
+  vrow.appendChild(vlabel);
+  vrow.appendChild(sel);
+  menu.appendChild(vrow);
+
+  const note = document.createElement("div");
+  note.className = "dj-note";
+  note.textContent = "Uses your Mac's built-in voices. Free, nothing is downloaded.";
+  menu.appendChild(note);
+}
+
+
+// ===== 26.5 Hide song ("never play this again") =====
+
+// Hidden ids live in localStorage "sonara-hidden". A hidden song is
+// excluded from every auto surface (mixes, radio, trending, Daylist,
+// Discover) but never deleted: playlists keep showing it with a quiet
+// tag, and the Library's Hidden tab can bring it back.
+const HIDDEN_KEY = "sonara-hidden";
+
+function loadHidden() {
+  try {
+    const raw = localStorage.getItem(HIDDEN_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.map(String) : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveHidden(ids) {
+  try {
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify(ids));
+  } catch (error) {
+    // Session-only then.
+  }
+}
+
+function isHiddenId(id) {
+  return !!hiddenSet()[String(id)];
+}
+
+// The hidden ids, cached in memory: isHiddenId runs per track on
+// every render, and re-reading localStorage each time would waste it.
+let hiddenCache = null;
+function hiddenSet() {
+  if (!hiddenCache) {
+    hiddenCache = {};
+    loadHidden().forEach(function (hid) {
+      hiddenCache[hid] = true;
+    });
+  }
+  return hiddenCache;
+}
+
+// Auto content always goes through this filter first.
+function visibleTracks(list) {
+  return list.filter(function (t) {
+    return !isHiddenId(t.id);
+  });
+}
+
+function hideSong(id) {
+  const ids = loadHidden();
+  const s = String(id);
+  if (ids.indexOf(s) === -1) {
+    ids.push(s);
+    saveHidden(ids);
+    hiddenCache = null;
+  }
+}
+
+function unhideSong(id) {
+  saveHidden(loadHidden().filter(function (x) {
+    return x !== String(id);
+  }));
+  hiddenCache = null;
+}
+
+const HIDE_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A9.8 9.8 0 0112 5c5 0 9 4.5 10 7-.4 1-1.3 2.4-2.7 3.7M6.6 6.6C4.1 8 2.6 10.4 2 12c1 2.5 5 7 10 7 1.5 0 2.9-.4 4.1-1"/></svg>';
+
+// Small hide button for rows and cards. stopPropagation keeps the
+// row's own click (play) from firing underneath it.
+function hideButton(track, cls) {
+  const b = document.createElement("button");
+  b.className = "hide-btn" + (cls ? " " + cls : "");
+  const hidden = isHiddenId(track.id);
+  b.classList.toggle("on", hidden);
+  b.setAttribute("aria-label", hidden ? "Unhide this song" : "Hide this song");
+  b.title = hidden ? "Unhide" : "Hide";
+  b.innerHTML = HIDE_SVG;
+  b.addEventListener("click", function (event) {
+    event.stopPropagation();
+    if (isHiddenId(track.id)) {
+      unhideSong(track.id);
+      showSkipNote("Song is back in your mixes.");
+    } else {
+      hideSong(track.id);
+      showSkipNote("Hidden. It will stay out of your mixes and radio.");
+    }
+    refreshHideButtons();
+  });
+  return b;
+}
+
+// After a hide/unhide, re-render whatever list is on screen so the
+// states update without a reload.
+function refreshHideButtons() {
+  if (openPlaylistId && !playlistView.hidden) {
+    renderPlaylistSongs();
+    return;
+  }
+  const active = document.querySelector("nav .nav-btn.active");
+  const v = active ? active.dataset.view : null;
+  if (v === "browse") {
+    loadTrending();
+  } else if (v === "library") {
+    renderLibrary();
+  }
+  // Search results keep their buttons until the next search; the
+  // exclusion from auto content applies immediately regardless.
+}
+
+// The Library's Hidden tab: every hidden song with an Unhide button.
+function renderHiddenTab() {
+  const ids = loadHidden();
+  const known = {};
+  likedTracks.forEach(function (t) {
+    known[String(t.id)] = t;
+  });
+  const stats = loadStats();
+  Object.keys(stats).forEach(function (k) {
+    if (!known[k] && stats[k]) {
+      known[k] = {
+        id: stats[k].id,
+        title: stats[k].title,
+        artist: stats[k].artist,
+        artwork: stats[k].artwork
+      };
+    }
+  });
+  libraryMessage.hidden = ids.length > 0;
+  if (ids.length === 0) {
+    libraryMessage.textContent =
+      "Nothing hidden. Hidden songs skip your mixes and radio.";
+    return;
+  }
+  ids.forEach(function (id) {
+    const t = known[id] || { id: id, title: "A hidden song", artist: "", artwork: null };
+    const row = document.createElement("div");
+    row.className = "queue-row";
+    const art = document.createElement("div");
+    art.className = "q-art";
+    const url = t.artwork ? t.artwork["150x150"] : null;
+    if (url) {
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = "";
+      img.onerror = function () {
+        art.innerHTML = "";
+        art.appendChild(noteIcon());
+      };
+      art.appendChild(img);
+    } else {
+      art.appendChild(noteIcon());
+    }
+    row.appendChild(art);
+    const text = document.createElement("div");
+    text.className = "q-text";
+    const title = document.createElement("div");
+    title.className = "q-title";
+    title.textContent = t.title;
+    text.appendChild(title);
+    const artist = document.createElement("div");
+    artist.className = "q-artist";
+    artist.textContent = t.artist || "";
+    text.appendChild(artist);
+    row.appendChild(text);
+    const un = document.createElement("button");
+    un.className = "text-btn";
+    un.textContent = "Unhide";
+    un.setAttribute("aria-label", "Unhide " + t.title);
+    un.addEventListener("click", function () {
+      unhideSong(id);
+      renderLibrary();
+      showSkipNote("Song is back.");
+    });
+    row.appendChild(un);
+    libraryList.appendChild(row);
+  });
+}
+
+
+// ===== 26.6 Offline Mixtape (YouTube Music-style auto-downloads) =====
+
+// A fresh ~25-song mix, rebuilt daily from music the artist allowed
+// you to keep, downloaded with the step-2 machinery. The button always
+// tells the truth about how much is actually on the Mac.
+const MIXTAPE_KEY = "sonara-offline-mixtape";
+const MIXTAPE_SIZE = 25;
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function loadMixtape() {
+  try {
+    const raw = localStorage.getItem(MIXTAPE_KEY);
+    const m = raw ? JSON.parse(raw) : null;
+    if (m && Array.isArray(m.trackIds)) {
+      return m;
+    }
+  } catch (error) {
+    // Corrupt entry: fall through to an empty one.
+  }
+  return { date: "", trackIds: [] };
+}
+
+function saveMixtape(m) {
+  try {
+    localStorage.setItem(MIXTAPE_KEY, JSON.stringify(m));
+  } catch (error) {
+    // Session-only then.
+  }
+}
+
+// Weekly-Mix spirit, but only songs the artist let you download.
+function buildMixtapeTracks() {
+  const picks = [];
+  const seen = {};
+  function consider(t) {
+    if (picks.length >= MIXTAPE_SIZE) {
+      return;
+    }
+    const id = String(t.id);
+    if (!id || seen[id] || isHiddenId(t.id)) {
+      return;
+    }
+    // The artist's download choice is the gate, always.
+    if (!canDownload(t)) {
+      return;
+    }
+    seen[id] = true;
+    picks.push(trackSummary(t));
+  }
+  likedTracks.forEach(consider);
+  trendingTracks.forEach(consider);
+  return picks;
+}
+
+function updateMixtapeBtn() {
+  const m = loadMixtape();
+  if (m.trackIds.length === 0) {
+    mixtapeBtn.textContent = "Build Offline Mixtape";
+    mixtapeStatus.hidden = true;
+    return;
+  }
+  const done = m.trackIds.filter(function (id) {
+    return isDownloaded(id);
+  }).length;
+  mixtapeBtn.textContent = "Refresh Mixtape";
+  mixtapeStatus.hidden = false;
+  mixtapeStatus.textContent = done + " of " + m.trackIds.length + " saved";
+}
+
+function buildMixtape() {
+  if (!navigator.onLine) {
+    showSkipNote("You are offline. Connect to build the mixtape.");
+    return;
+  }
+  const tracks = buildMixtapeTracks();
+  if (tracks.length === 0) {
+    showSkipNote("No downloadable songs found yet. Play some music first.");
+    return;
+  }
+  saveMixtape({
+    date: todayStr(),
+    trackIds: tracks.map(function (t) {
+      return String(t.id);
+    })
+  });
+  let n = 0;
+  tracks.forEach(function (t) {
+    if (!isDownloaded(t.id) && dlProgress[t.id] === undefined) {
+      startDownload(t);
+      n++;
+    }
+  });
+  showSkipNote(n > 0
+    ? "Downloading your Offline Mixtape: " + n + " songs."
+    : "Mixtape is already fully downloaded.");
+  updateMixtapeBtn();
+}
+
+// Called when the Downloaded view opens: a mixtape older than today
+// rebuilds itself quietly.
+function checkMixtapeFresh() {
+  const m = loadMixtape();
+  if (m.trackIds.length === 0) {
+    updateMixtapeBtn();
+    return; // never built: the button waits for its first tap
+  }
+  if (m.date === todayStr()) {
+    updateMixtapeBtn();
+    return;
+  }
+  if (!navigator.onLine) {
+    updateMixtapeBtn();
+    return;
+  }
+  buildMixtape();
+}
+
+
+// ===== 26.7 Discover Mix (weekly, only music you never played) =====
+
+const DISCOVER_KEY = "sonara-discover-mix";
+const WEEK_MS = 7 * 24 * 3600 * 1000;
+
+function loadDiscoverMix() {
+  try {
+    const raw = localStorage.getItem(DISCOVER_KEY);
+    const m = raw ? JSON.parse(raw) : null;
+    if (m && Array.isArray(m.tracks)) {
+      return m;
+    }
+  } catch (error) {
+    // Corrupt entry: fall through to an empty one.
+  }
+  return { generatedAt: 0, tracks: [] };
+}
+
+function saveDiscoverMix(m) {
+  try {
+    localStorage.setItem(DISCOVER_KEY, JSON.stringify(m));
+  } catch (error) {
+    // Session-only then.
+  }
+}
+
+function buildDiscoverMix() {
+  const stats = loadStats();
+  const played = {};
+  Object.keys(stats).forEach(function (k) {
+    played[String(stats[k].id)] = true;
+  });
+  const genres = likedGenres();
+  const picks = [];
+  const seen = {};
+  function consider(t) {
+    if (picks.length >= 30) {
+      return;
+    }
+    const id = String(t.id);
+    if (!id || seen[id] || played[id] || isHiddenId(t.id)) {
+      return;
+    }
+    seen[id] = true;
+    picks.push(trackSummary(t));
+  }
+  // Your genres first, then everything else trending.
+  trendingTracks.forEach(function (t) {
+    if (genres.indexOf(t.genre) !== -1) {
+      consider(t);
+    }
+  });
+  trendingTracks.forEach(function (t) {
+    consider(t);
+  });
+  return { generatedAt: Date.now(), tracks: picks };
+}
+
+function getDiscoverMix() {
+  const m = loadDiscoverMix();
+  if (m.tracks.length === 0 || Date.now() - m.generatedAt > WEEK_MS) {
+    const fresh = buildDiscoverMix();
+    if (fresh.tracks.length > 0) {
+      saveDiscoverMix(fresh);
+    }
+    return fresh;
+  }
+  return m;
+}
+
+
+// ===== Virtual playlist plumbing for Daylist + Discover =====
+
+// Daylist and Discover Mix pin under Weekly Mix in the sidebar.
+function renderMoreSpecialPlaylists() {
+  playlistNav.appendChild(specialNavButton("daylist", "Daylist",
+    DAYLIST_SVG, getDaylist().tracks.length));
+  playlistNav.appendChild(specialNavButton("discover", "Discover Mix",
+    DISCOVER_SVG, getDiscoverMix().tracks.length));
+}
+
+const DAYLIST_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>';
+const DISCOVER_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-2 5-4 1 2-5z" fill="currentColor" stroke="none"/></svg>';
+
+// The open view for Daylist / Discover Mix. Removing a song drops it
+// from the saved mix, like Weekly Mix does.
+function renderDayOrDiscover() {
+  const isDay = openPlaylistId === "daylist";
+  const data = isDay ? getDaylist() : getDiscoverMix();
+  const tracks = data.tracks;
+  playlistList.innerHTML = "";
+  refreshMixBtn.hidden = true;
+  deletePlaylistBtn.hidden = true;
+  // Virtual mixes cannot move into folders.
+  folderMoveBtn.hidden = true;
+  playlistTitle.textContent = isDay ? "Daylist" : "Discover Mix";
+  playlistSubtitle.textContent = isDay
+    ? data.label + " · made for right now"
+    : "New music you have not played yet · refreshed weekly";
+  if (tracks.length === 0) {
+    playlistMessage.textContent = isDay
+      ? "Play some music first, then your daylist appears."
+      : "Play some music first, then discoveries appear.";
+    playlistMessage.hidden = false;
+  } else {
+    playlistMessage.hidden = true;
+    tracks.forEach(function (song, index) {
+      playlistList.appendChild(playlistRow(
+        { tracks: tracks }, song, index,
+        function (i) {
+          const d = isDay ? loadDaylist() : loadDiscoverMix();
+          d.tracks.splice(i, 1);
+          if (isDay) {
+            saveDaylist(d);
+          } else {
+            saveDiscoverMix(d);
+          }
+          renderPlaylistNav();
+          renderDayOrDiscover();
+        }
+      ));
+    });
+  }
+
+  // "Download all" mirrors the other virtual playlists.
+  const pending = tracks.filter(function (song) {
+    return canDownload(song) && !isDownloaded(song.id) &&
+      dlProgress[song.id] === undefined;
+  });
+  downloadAllBtn.hidden = pending.length === 0;
+  downloadAllBtn.onclick = function () {
+    pending.forEach(function (song) {
+      startDownload(song);
+    });
+    showSkipNote("Downloading " + pending.length +
+      (pending.length === 1 ? " song." : " songs."));
+    renderDayOrDiscover();
+  };
+}
+
+
+// ===== 26.8 Recap ("Your year", honest about the data window) =====
+
+// Grows out of the Stats view. The caption is deliberate: listening
+// stats only exist from v0.5 on, so "your year" starts today and
+// fills in as you listen.
+function renderRecap() {
+  const stats = loadStats();
+  const entries = Object.keys(stats).map(function (k) {
+    return stats[k];
+  }).filter(function (e) {
+    return e.plays > 0;
+  });
+  if (entries.length === 0) {
+    return;
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "recap-block";
+  const h = document.createElement("h2");
+  h.textContent = "Your year";
+  wrap.appendChild(h);
+  const cap = document.createElement("p");
+  cap.className = "recap-cap";
+  cap.textContent = "Since you started using Sonara.";
+  wrap.appendChild(cap);
+
+  const totalSecs = entries.reduce(function (sum, e) {
+    return sum + (e.seconds || 0);
+  }, 0);
+  const big = document.createElement("div");
+  big.className = "stat-block";
+  const bigNum = document.createElement("div");
+  bigNum.className = "stat-big";
+  bigNum.textContent = Math.round(totalSecs / 60);
+  const bigLabel = document.createElement("div");
+  bigLabel.className = "stat-big-label";
+  bigLabel.textContent = "minutes so far this year";
+  big.appendChild(bigNum);
+  big.appendChild(bigLabel);
+  wrap.appendChild(big);
+
+  wrap.appendChild(statBlock("Top songs this year",
+    entries.slice().sort(function (a, b) {
+      return b.plays - a.plays;
+    }).slice(0, 5).map(function (e) {
+      return {
+        name: e.title,
+        sub: e.artist,
+        meta: e.plays + (e.plays === 1 ? " play" : " plays")
+      };
+    })));
+
+  const byArtist = {};
+  entries.forEach(function (e) {
+    const a = byArtist[e.artist] || { artist: e.artist, plays: 0 };
+    a.plays += e.plays;
+    byArtist[e.artist] = a;
+  });
+  const artists = Object.keys(byArtist).map(function (k) {
+    return byArtist[k];
+  }).sort(function (a, b) {
+    return b.plays - a.plays;
+  }).slice(0, 5);
+  wrap.appendChild(statBlock("Top artists this year",
+    artists.map(function (a) {
+      return {
+        name: a.artist,
+        sub: a.plays + (a.plays === 1 ? " play" : " plays"),
+        meta: ""
+      };
+    })));
+
+  const byGenre = {};
+  entries.forEach(function (e) {
+    if (e.genre) {
+      byGenre[e.genre] = (byGenre[e.genre] || 0) + e.plays;
+    }
+  });
+  const topGenre = Object.keys(byGenre).sort(function (a, b) {
+    return byGenre[b] - byGenre[a];
+  })[0];
+  if (topGenre) {
+    wrap.appendChild(statBlock("Top genre", [{
+      name: topGenre,
+      sub: byGenre[topGenre] + " plays",
+      meta: ""
+    }]));
+  } else {
+    const more = document.createElement("p");
+    more.className = "recap-cap";
+    more.textContent = "Keep listening and your top genre appears here.";
+    wrap.appendChild(more);
+  }
+
+  statsBody.appendChild(wrap);
+}
+
+
+// ===== 26.9 Charts (genre pills, the honest version) =====
+
+// NOTE, verified 2026-10-16 against the live Audius API: track objects
+// expose NO language field (keys are genre, mood, tags, ...). Faking
+// "Telugu charts" with keyword search would lie, so Charts filter by
+// the real, verified `genre` field instead. Genres are filtered on
+// this Mac from one trending fetch; no extra API surface is assumed.
+let chartCache = null;
+let chartGenre = "All";
+let chartFiltered = [];
+
+async function renderCharts() {
+  chartsMessage.hidden = false;
+  chartsMessage.textContent = "Loading charts...";
+  try {
+    if (!chartCache || Date.now() - chartCache.at > 30 * 60 * 1000) {
+      const url = API_BASE + "/tracks/trending?app_name=" + APP_NAME +
+        "&limit=100&time=week";
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error("bad response");
+      }
+      const json = await res.json();
+      chartCache = {
+        at: Date.now(),
+        tracks: (json.data || []).filter(function (t) {
+          return t && !t.is_delete;
+        })
+      };
+    }
+    const genres = [];
+    chartCache.tracks.forEach(function (t) {
+      if (t.genre && genres.indexOf(t.genre) === -1) {
+        genres.push(t.genre);
+      }
+    });
+    genres.sort();
+    renderChartPills(["All"].concat(genres));
+    renderChartGrid();
+    chartsMessage.hidden = true;
+  } catch (error) {
+    chartsMessage.textContent =
+      "Could not load charts. Check your connection and try again.";
+  }
+}
+
+function renderChartPills(genres) {
+  chartPills.innerHTML = "";
+  genres.forEach(function (g) {
+    const b = document.createElement("button");
+    b.className = "chart-pill" + (g === chartGenre ? " active" : "");
+    b.textContent = g;
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-label", "Chart genre " + g);
+    b.addEventListener("click", function () {
+      chartGenre = g;
+      renderChartPills(genres);
+      renderChartGrid();
+    });
+    chartPills.appendChild(b);
+  });
+}
+
+function renderChartGrid() {
+  let list = chartCache ? chartCache.tracks : [];
+  list = visibleTracks(list);
+  if (chartGenre !== "All") {
+    list = list.filter(function (t) {
+      return t.genre === chartGenre;
+    });
+  }
+  chartFiltered = list;
+  renderTracks(chartsGrid, chartFiltered, function (index) {
+    startQueue(chartFiltered, index);
+  });
+}
+
+
+// ===== 26.10 Wiring it all up =====
+
+mixtapeBtn.addEventListener("click", buildMixtape);
+
+// Keep the mixtape button honest as downloads finish.
+if (window.sonara && window.sonara.onDownloadDone) {
+  window.sonara.onDownloadDone(function () {
+    updateMixtapeBtn();
+  });
+}
+if (window.sonara && window.sonara.onDownloadProgress) {
+  window.sonara.onDownloadProgress(function () {
+    updateMixtapeBtn();
+  });
+}
+updateMixtapeBtn();
 
 
 // ---------- 10. Start the app ----------
