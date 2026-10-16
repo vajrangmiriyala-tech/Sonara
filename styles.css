@@ -1015,3 +1015,189 @@ body.mini-window .mini-player {
 .spotify-btn {
   margin: 8px 0 4px;
 }
+
+/* ============================================================
+   v0.4 additions: extra themes, ember particles, coverflow,
+   sound panel (equalizer + crossfade)
+   ============================================================ */
+
+/* ---------- Extra themes ---------- */
+
+[data-theme="midnight"] {
+  --bg: #0a0f1e;
+  --panel: #0f1628;
+  --elevated: #1a2340;
+  --text: #e8edf7;
+  --muted: #8b96b0;
+  --border: rgba(140, 160, 200, 0.12);
+  --accent: #6ea8fe;
+  --accent-dark: #5b93ec;
+  --accent-soft: rgba(110, 168, 254, 0.14);
+  --tile: #1c2542;
+  --hover: rgba(140, 160, 200, 0.08);
+  --pressed: rgba(140, 160, 200, 0.14);
+  --player-bg: rgba(10, 15, 30, 0.85);
+  --lyric-dim: #4a5570;
+  --radius: 8px;
+}
+
+[data-theme="forest"] {
+  --bg: #0c110d;
+  --panel: #121814;
+  --elevated: #1c261e;
+  --text: #eef4ee;
+  --muted: #93a493;
+  --border: rgba(150, 190, 150, 0.1);
+  --accent: #4ade80;
+  --accent-dark: #3bc56b;
+  --accent-soft: rgba(74, 222, 128, 0.14);
+  --tile: #1e2a20;
+  --hover: rgba(150, 190, 150, 0.08);
+  --pressed: rgba(150, 190, 150, 0.14);
+  --player-bg: rgba(12, 17, 13, 0.85);
+  --lyric-dim: #4c5c4e;
+  --radius: 8px;
+}
+
+[data-theme="sunset"] {
+  --bg: #160f0c;
+  --panel: #1f1510;
+  --elevated: #2c1e15;
+  --text: #fdf3ec;
+  --muted: #b89d8a;
+  --border: rgba(255, 150, 100, 0.12);
+  --accent: #ff6b35;
+  --accent-dark: #e05a2b;
+  --accent-soft: rgba(255, 107, 53, 0.16);
+  --tile: #33221a;
+  --hover: rgba(255, 150, 100, 0.08);
+  --pressed: rgba(255, 150, 100, 0.14);
+  --player-bg: rgba(22, 15, 12, 0.85);
+  --lyric-dim: #6b564a;
+  --radius: 8px;
+}
+
+/* ---------- Ember particle canvas ---------- */
+
+.ember-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* ---------- Browse view toggle: grid / coverflow ---------- */
+
+.browse-toggle {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+}
+
+.view-toggle.active {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.coverflow-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 360px;
+  perspective: 1400px;
+  overflow: hidden;
+  padding: 10px 0 30px;
+}
+
+.coverflow {
+  position: relative;
+  flex: 1;
+  max-width: 760px;
+  height: 320px;
+  transform-style: preserve-3d;
+}
+
+.flow-item {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  width: 220px;
+  height: 220px;
+  margin-left: -110px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  color: inherit;
+  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.45s ease;
+}
+
+.flow-item .artwork {
+  width: 220px;
+  height: 220px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.flow-item:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 6px;
+}
+
+.flow-caption {
+  margin-top: 10px;
+  text-align: center;
+}
+
+.flow-caption .card-title,
+.flow-caption .card-artist {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flow-arrow {
+  font-size: 30px;
+  line-height: 1;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+}
+
+/* ---------- Sound panel: equalizer + crossfade ---------- */
+
+.sound-menu {
+  min-width: 290px;
+  padding: 16px;
+}
+
+.sound-title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.xfade-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.xfade-row select {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+}

@@ -9,6 +9,9 @@
 </head>
 <body>
 
+  <!-- Subtle falling ember particles behind everything -->
+  <canvas id="emberCanvas" class="ember-canvas" aria-hidden="true"></canvas>
+
   <div class="app">
 
     <!-- Left sidebar: app name and navigation -->
@@ -19,6 +22,7 @@
         <button class="nav-btn" data-view="search">Search</button>
         <button class="nav-btn" data-view="queue">Up Next</button>
         <button class="nav-btn" data-view="lyrics">Lyrics</button>
+        <button class="nav-btn" data-view="recent">Recent</button>
       </nav>
       <div class="playlists-head">
         <span>Playlists</span>
@@ -30,9 +34,11 @@
       <div id="playlistNav"></div>
       <button id="spotifyImportBtn" class="text-btn spotify-btn">Import from Spotify</button>
       <button id="textImportBtn" class="text-btn spotify-btn">Import track list</button>
+      <button id="localFilesBtn" class="text-btn spotify-btn">Play local files</button>
+      <input id="localFileInput" type="file" accept="audio/*" multiple hidden>
       <div class="sidebar-foot">
         <span>Free and open source</span>
-        <button id="themeToggle" class="text-btn">Light mode</button>
+        <button id="themeToggle" class="text-btn">Dark</button>
       </div>
     </aside>
 
@@ -43,7 +49,16 @@
       <section id="browseView">
         <h1>Trending This Week</h1>
         <p class="subtitle">Fresh tracks from the Audius community</p>
+        <div class="browse-toggle">
+          <button id="gridViewBtn" class="text-btn view-toggle active">Grid</button>
+          <button id="flowViewBtn" class="text-btn view-toggle">Coverflow</button>
+        </div>
         <div id="trendingGrid" class="grid"></div>
+        <div id="coverflowWrap" class="coverflow-wrap" hidden>
+          <button id="flowPrev" class="ctrl-btn flow-arrow" aria-label="Previous album">&#8249;</button>
+          <div id="coverflow" class="coverflow"></div>
+          <button id="flowNext" class="ctrl-btn flow-arrow" aria-label="Next album">&#8250;</button>
+        </div>
         <p id="trendingMessage" class="message">Loading trending tracks...</p>
       </section>
 
@@ -81,6 +96,14 @@
         <p class="subtitle" id="lyricsSubtitle"></p>
         <div id="lyricsLines" class="lyrics"></div>
         <p id="lyricsMessage" class="message" hidden></p>
+      </section>
+
+      <!-- Recent view: songs you played lately -->
+      <section id="recentView" hidden>
+        <h1>Recently Played</h1>
+        <p class="subtitle">Your last 20 tracks</p>
+        <div id="recentList"></div>
+        <p id="recentMessage" class="message">Nothing here yet. Play something first.</p>
       </section>
 
     </main>
@@ -128,6 +151,10 @@
     <button id="sleepBtn" class="ctrl-btn mini-toggle" aria-label="Sleep timer" title="Sleep timer">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
     </button>
+
+    <button id="soundBtn" class="ctrl-btn mini-toggle" aria-label="Sound: equalizer and crossfade" title="Sound">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M4 9v6h4l5 5V4L7 9H4zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
+    </button>
   </footer>
 
   <!-- Small menu for picking which playlist to add a song to -->
@@ -135,6 +162,12 @@
 
   <!-- Small menu for picking the sleep timer length -->
   <div id="sleepMenu" class="add-menu" hidden></div>
+
+  <!-- Small menu for picking the theme -->
+  <div id="themeMenu" class="add-menu" hidden></div>
+
+  <!-- Sound panel: equalizer sliders, presets, crossfade -->
+  <div id="soundMenu" class="add-menu sound-menu" hidden></div>
 
   <!-- Modal dialog: Spotify setup, playlist picker, import progress -->
   <div id="modalOverlay" class="modal-overlay" hidden>

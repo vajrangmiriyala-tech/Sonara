@@ -61,6 +61,11 @@ const lyricsMessage = document.getElementById("lyricsMessage");
 const navButtons = document.querySelectorAll(".nav-btn");
 
 const audio = document.getElementById("audio");
+// Second audio element, used only for crossfades: the new track starts
+// here while the old one fades out on the main element.
+const audioX = document.createElement("audio");
+audioX.preload = "metadata";
+let activeAudio = audio; // the element the UI (seek bar, timers) follows
 const playerArt = document.getElementById("playerArt");
 const playerTitle = document.getElementById("playerTitle");
 const playerArtist = document.getElementById("playerArtist");
@@ -274,6 +279,9 @@ async function loadTrending() {
     renderTracks(trendingGrid, tracks, function (index) {
       startQueue(trendingTracks, index);
     });
+    if (browseMode === "flow") {
+      renderCoverflow();
+    }
   } catch (error) {
     // Friendly message only. We never show the raw error to the user.
     trendingMessage.textContent =
@@ -348,12 +356,19 @@ function playCurrent() {
     return;
   }
   lastSkipSrc = ""; // new track, so a fresh skip is allowed
-  audio.src = streamUrl(track.id);
-  audio.play().catch(function () {
-    // The browser refused to play. Often a stream-gated track.
-    skipWithNote();
-  });
+  const src = track._objectUrl || streamUrl(track.id);
+  if (xfadeSecs > 0 && !activeAudio.paused && activeAudio.src) {
+    startCrossfade(src);
+  } else {
+    activeAudio = audio;
+    audio.src = src;
+    audio.play().catch(function () {
+      // The browser refused to play. Often a stream-gated track.
+      skipWithNote();
+    });
+  }
   updatePlayerUI(track);
+  pushRecent(track);
 }
 
 // Play / pause toggle for the big round button.
@@ -365,10 +380,10 @@ function togglePlay() {
     }
     return;
   }
-  if (audio.paused) {
-    audio.play();
+  if (activeAudio.paused) {
+    activeAudio.play();
   } else {
-    audio.pause();
+    activeAudio.pause();
   }
 }
 
@@ -381,8 +396,8 @@ function nextTrack() {
 
 function prevTrack() {
   // If we are a few seconds into the song, restart it instead of going back.
-  if (audio.currentTime > 3 && currentIndex !== -1) {
-    audio.currentTime = 0;
+  if (activeAudio.currentTime > 3 && currentIndex !== -1) {
+    activeAudio.currentTime = 0;
     return;
   }
   if (currentIndex > 0) {
@@ -393,10 +408,10 @@ function prevTrack() {
 
 // Skip a broken track and show a tiny note saying so.
 function skipWithNote() {
-  if (audio.src === lastSkipSrc) {
+  if (activeAudio.src === lastSkipSrc) {
     return; // already skipped for this track, do not skip twice
   }
-  lastSkipSrc = audio.src;
+  lastSkipSrc = activeAudio.src;
   showSkipNote("Skipped a track that would not play.");
   nextTrack();
 }
@@ -431,7 +446,7 @@ function updatePlayerUI(track) {
     playerArt.appendChild(noteIcon());
   }
 
-  playerTitle.textContent = track.title;
+  scrambleText(playerTitle, track.title);
   playerArtist.textContent = artistName(track);
   document.title = track.title + " - " + artistName(track) + " | Sonara";
 
@@ -730,6 +745,7 @@ function closeAddMenu() {
 document.addEventListener("click", function () {
   closeAddMenu();
   closeSleepMenu();
+  closeSoundMenu();
 });
 
 
@@ -878,7 +894,7 @@ function updateLyricHighlight() {
   if (lyricLines.length === 0 || lyricsView.hidden) {
     return;
   }
-  const t = audio.currentTime;
+  const t = activeAudio.currentTime;
   let active = -1;
   for (let i = 0; i < lyricLines.length; i++) {
     if (lyricLines[i].time <= t) {
@@ -908,61 +924,75 @@ nextButton.addEventListener("click", nextTrack);
 prevButton.addEventListener("click", prevTrack);
 
 // Swap the round button icon between play and pause.
-audio.addEventListener("play", function () {
-  playButton.innerHTML = PAUSE_SVG;
-  playButton.setAttribute("aria-label", "Pause");
-  syncMiniPlayIcon();
-});
-audio.addEventListener("pause", function () {
-  playButton.innerHTML = PLAY_SVG;
-  playButton.setAttribute("aria-label", "Play");
-  syncMiniPlayIcon();
-});
+// Wired to both audio elements; only the active one drives the UI.
+function wireAudio(el) {
+  el.addEventListener("play", function () {
+    if (el !== activeAudio) return;
+    playButton.innerHTML = PAUSE_SVG;
+    playButton.setAttribute("aria-label", "Pause");
+    syncMiniPlayIcon();
+  });
+  el.addEventListener("pause", function () {
+    if (el !== activeAudio) return;
+    playButton.innerHTML = PLAY_SVG;
+    playButton.setAttribute("aria-label", "Play");
+    syncMiniPlayIcon();
+  });
 
-// Keep the seek bar and time labels in sync with playback,
-// and move the lyric highlight as the song plays.
-audio.addEventListener("timeupdate", function () {
-  currentTimeLabel.textContent = formatTime(audio.currentTime);
-  if (audio.duration) {
-    seekBar.value = (audio.currentTime / audio.duration) * 1000;
-  }
-  updateLyricHighlight();
-});
+  // Keep the seek bar and time labels in sync with playback,
+  // and move the lyric highlight as the song plays.
+  el.addEventListener("timeupdate", function () {
+    if (el !== activeAudio) return;
+    currentTimeLabel.textContent = formatTime(el.currentTime);
+    if (el.duration) {
+      seekBar.value = (el.currentTime / el.duration) * 1000;
+    }
+    updateLyricHighlight();
+  });
 
-// Once the track metadata loads we know the full duration.
-audio.addEventListener("loadedmetadata", function () {
-  durationLabel.textContent = formatTime(audio.duration);
-});
+  // Once the track metadata loads we know the full duration.
+  el.addEventListener("loadedmetadata", function () {
+    if (el !== activeAudio) return;
+    durationLabel.textContent = formatTime(el.duration);
+  });
 
-// When a track finishes, move to the next one.
-audio.addEventListener("ended", nextTrack);
+  // When a track finishes, move to the next one.
+  el.addEventListener("ended", function () {
+    if (el !== activeAudio) return;
+    nextTrack();
+  });
 
-// When a stream fails (for example a gated track), skip it quietly.
-audio.addEventListener("error", function () {
-  if (currentIndex !== -1 && audio.src) {
-    skipWithNote();
-  }
-});
+  // When a stream fails (for example a gated track), skip it quietly.
+  el.addEventListener("error", function () {
+    if (el !== activeAudio) return;
+    if (currentIndex !== -1 && el.src) {
+      skipWithNote();
+    }
+  });
+}
+wireAudio(audio);
+wireAudio(audioX);
 
 // Dragging the seek bar jumps to that point in the song.
 seekBar.addEventListener("input", function () {
-  if (audio.duration) {
-    audio.currentTime = (seekBar.value / 1000) * audio.duration;
+  if (activeAudio.duration) {
+    activeAudio.currentTime = (seekBar.value / 1000) * activeAudio.duration;
   }
 });
 
 // The volume slider sets the audio volume from 0 to 1.
 volumeBar.addEventListener("input", function () {
-  audio.volume = parseFloat(volumeBar.value);
+  setUserVolume(parseFloat(volumeBar.value));
 });
 
-// Shows one of the four main views and marks the right nav button active.
+// Shows one of the five main views and marks the right nav button active.
 function showView(view) {
   browseView.hidden = view !== "browse";
   searchView.hidden = view !== "search";
   queueView.hidden = view !== "queue";
   playlistView.hidden = view !== "playlist";
   lyricsView.hidden = view !== "lyrics";
+  recentView.hidden = view !== "recent";
 
   navButtons.forEach(function (other) {
     other.classList.toggle("active", other.dataset.view === view);
@@ -982,6 +1012,9 @@ function showView(view) {
   if (view === "lyrics") {
     renderLyrics();
     updateLyricHighlight();
+  }
+  if (view === "recent") {
+    renderRecent();
   }
 }
 
@@ -1052,25 +1085,28 @@ function isTyping(target) {
 }
 
 function nudgeVolume(step) {
-  if (audio.muted) {
-    audio.muted = false;
+  if (activeAudio.muted) {
+    activeAudio.muted = false;
+    audioX.muted = false;
   }
-  const next = Math.min(1, Math.max(0, audio.volume + step));
-  audio.volume = next;
-  volumeBar.value = next;
+  setUserVolume(userVolume + step);
 }
 
 function toggleMute() {
-  if (audio.muted || audio.volume === 0) {
-    audio.muted = false;
-    if (audio.volume === 0) {
-      audio.volume = unmutedVolume;
+  if (activeAudio.muted || userVolume === 0) {
+    activeAudio.muted = false;
+    audioX.muted = false;
+    if (userVolume === 0) {
+      setUserVolume(unmutedVolume);
+    } else {
+      volumeBar.value = userVolume;
     }
   } else {
-    unmutedVolume = audio.volume;
-    audio.muted = true;
+    unmutedVolume = userVolume;
+    activeAudio.muted = true;
+    audioX.muted = true;
+    volumeBar.value = 0;
   }
-  volumeBar.value = audio.muted ? 0 : audio.volume;
 }
 
 document.addEventListener("keydown", function (event) {
@@ -1172,7 +1208,7 @@ function syncMiniTrack() {
 
 // Keep the mini play button's icon in step with the real one.
 function syncMiniPlayIcon() {
-  if (audio.paused) {
+  if (activeAudio.paused) {
     miniPlay.innerHTML = PLAY_SVG;
     miniPlay.setAttribute("aria-label", "Play");
   } else {
@@ -1230,10 +1266,10 @@ function updateSleepButton() {
 }
 
 function fireSleepTimer() {
-  const wasPlaying = !audio.paused;
+  const wasPlaying = !activeAudio.paused;
   const length = sleepMinutes;
   cancelSleepTimer();
-  audio.pause();
+  activeAudio.pause();
   if (wasPlaying) {
     showSkipNote("Sleep timer ended after " + length + " minutes.");
   }
@@ -1799,24 +1835,546 @@ if (window.sonara && window.sonara.onMiniMode) {
 }
 
 
-// ---------- 14. Theme: dark or light ----------
+// ---------- 14. Themes ----------
 
-// Dark is the default. The choice is saved in localStorage,
+// Five themes. The choice is saved in localStorage,
 // so it survives closing and reopening the app.
+const THEMES = [
+  { id: "dark", name: "Dark" },
+  { id: "light", name: "Light" },
+  { id: "midnight", name: "Midnight" },
+  { id: "forest", name: "Forest" },
+  { id: "sunset", name: "Sunset" },
+];
 const themeToggle = document.getElementById("themeToggle");
+const themeMenu = document.getElementById("themeMenu");
 
 function applyTheme(theme) {
+  if (!THEMES.some(function (t) { return t.id === theme; })) {
+    theme = "dark";
+  }
   document.documentElement.setAttribute("data-theme", theme);
   localStorage.setItem("sonara-theme", theme);
-  themeToggle.textContent = theme === "dark" ? "Light mode" : "Dark mode";
+  const found = THEMES.find(function (t) { return t.id === theme; });
+  themeToggle.textContent = found.name;
 }
 
-themeToggle.addEventListener("click", function () {
+function openThemeMenu() {
+  themeMenu.innerHTML = "";
   const current = document.documentElement.getAttribute("data-theme") || "dark";
-  applyTheme(current === "dark" ? "light" : "dark");
+  THEMES.forEach(function (t) {
+    const b = document.createElement("button");
+    b.className = "add-menu-item";
+    b.textContent = (t.id === current ? "✓ " : "") + t.name;
+    b.addEventListener("click", function () {
+      applyTheme(t.id);
+      closeThemeMenu();
+    });
+    themeMenu.appendChild(b);
+  });
+  // Pop up just above the sidebar button.
+  const r = themeToggle.getBoundingClientRect();
+  themeMenu.style.left = r.left + "px";
+  themeMenu.style.top = "auto";
+  themeMenu.style.bottom = (window.innerHeight - r.top + 8) + "px";
+  themeMenu.hidden = false;
+}
+
+function closeThemeMenu() {
+  themeMenu.hidden = true;
+}
+
+themeToggle.addEventListener("click", function (event) {
+  event.stopPropagation();
+  if (themeMenu.hidden) {
+    openThemeMenu();
+  } else {
+    closeThemeMenu();
+  }
+});
+
+document.addEventListener("click", function (event) {
+  if (!themeMenu.hidden && !themeMenu.contains(event.target)) {
+    closeThemeMenu();
+  }
 });
 
 applyTheme(localStorage.getItem("sonara-theme") || "dark");
+
+
+// ---------- 15. Crossfade: Spotify-style smooth track transitions ----------
+
+// Two audio elements take turns: the new track fades in on the idle
+// one while the old track fades out. No Web Audio needed, so this
+// works on every stream.
+let xfadeSecs = parseInt(localStorage.getItem("sonara-xfade") || "0", 10) || 0;
+let xfadeTimer = null;
+let userVolume = 0.8;
+audioX.volume = userVolume;
+
+function setUserVolume(v) {
+  userVolume = Math.min(1, Math.max(0, v));
+  if (xfadeTimer) {
+    clearInterval(xfadeTimer);
+    xfadeTimer = null;
+  }
+  audio.volume = userVolume;
+  audioX.volume = userVolume;
+  volumeBar.value = userVolume;
+}
+
+function startCrossfade(src) {
+  const oldEl = activeAudio;
+  const newEl = (oldEl === audio) ? audioX : audio;
+  activeAudio = newEl;
+  clearInterval(xfadeTimer);
+  xfadeTimer = null;
+  newEl.src = src;
+  newEl.volume = 0;
+  newEl.play().then(function () {
+    const steps = 24;
+    const interval = (xfadeSecs * 1000) / steps;
+    let n = 0;
+    xfadeTimer = setInterval(function () {
+      n++;
+      const t = Math.min(1, n / steps);
+      // Square-root curve sounds smoother than a straight line.
+      newEl.volume = userVolume * Math.sqrt(t);
+      oldEl.volume = userVolume * Math.sqrt(1 - t);
+      if (t >= 1) {
+        clearInterval(xfadeTimer);
+        xfadeTimer = null;
+        oldEl.pause();
+        oldEl.volume = userVolume;
+        newEl.volume = userVolume;
+      }
+    }, interval);
+  }).catch(function () {
+    // The new track refused to play: stay on the old one.
+    activeAudio = oldEl;
+    oldEl.volume = userVolume;
+    newEl.pause();
+    skipWithNote();
+  });
+}
+
+
+// ---------- 16. Scramble-text track titles ----------
+
+// OriginKit-style "Scramble Text": the title flickers through random
+// characters before settling. Pure vanilla JS, no library.
+const SCRAMBLE_CHARS = "!<>-_\\/[]{}=+*^?#";
+let scrambleFrame = null;
+
+function scrambleText(el, text) {
+  if (!text) {
+    el.textContent = "";
+    return;
+  }
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    el.textContent = text;
+    return;
+  }
+  if (scrambleFrame) {
+    cancelAnimationFrame(scrambleFrame);
+  }
+  const start = performance.now();
+  const duration = 500;
+  function frame(now) {
+    const t = Math.min(1, (now - start) / duration);
+    const reveal = Math.floor(t * text.length);
+    let out = "";
+    for (let i = 0; i < text.length; i++) {
+      if (i < reveal || text[i] === " ") {
+        out += text[i];
+      } else {
+        out += SCRAMBLE_CHARS[(Math.random() * SCRAMBLE_CHARS.length) | 0];
+      }
+    }
+    el.textContent = out;
+    if (t < 1) {
+      scrambleFrame = requestAnimationFrame(frame);
+    } else {
+      el.textContent = text;
+      scrambleFrame = null;
+    }
+  }
+  scrambleFrame = requestAnimationFrame(frame);
+}
+
+
+// ---------- 17. Ember particle background ----------
+
+// Subtle embers drift upward behind the app, tinted with the current
+// theme's accent color. Canvas 2D, ~45 particles, zero dependencies.
+(function initEmbers() {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return;
+  }
+  const canvas = document.getElementById("emberCanvas");
+  if (!canvas || !canvas.getContext) {
+    return;
+  }
+  const ctx = canvas.getContext("2d");
+  let w = 0;
+  let h = 0;
+  function resize() {
+    w = canvas.width = window.innerWidth;
+    h = canvas.height = window.innerHeight;
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  function accentRGB() {
+    const v = getComputedStyle(document.documentElement)
+      .getPropertyValue("--accent").trim();
+    const m = v.match(/#([0-9a-f]{6})/i);
+    if (m) {
+      const n = parseInt(m[1], 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    }
+    return [255, 107, 53];
+  }
+
+  function spawn(fromTop) {
+    return {
+      x: Math.random() * w,
+      y: fromTop ? Math.random() * h : h + 10,
+      r: 0.8 + Math.random() * 2.2,
+      s: 0.15 + Math.random() * 0.45,
+      drift: (Math.random() - 0.5) * 0.3,
+      a: 0.06 + Math.random() * 0.18,
+      tw: Math.random() * Math.PI * 2
+    };
+  }
+
+  const parts = [];
+  for (let i = 0; i < 45; i++) {
+    parts.push(spawn(true));
+  }
+
+  function tick() {
+    ctx.clearRect(0, 0, w, h);
+    const c = accentRGB();
+    for (const p of parts) {
+      p.y -= p.s;
+      p.tw += 0.01;
+      p.x += p.drift + Math.sin(p.tw) * 0.2;
+      if (p.y < -12) {
+        Object.assign(p, spawn(false));
+      }
+      const alpha = p.a * (0.7 + 0.3 * Math.sin(p.tw * 2));
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(" + c[0] + "," + c[1] + "," + c[2] +
+        "," + alpha.toFixed(3) + ")";
+      ctx.fill();
+    }
+    requestAnimationFrame(tick);
+  }
+  tick();
+})();
+
+
+// ---------- 18. Recently played ----------
+
+const recentView = document.getElementById("recentView");
+const recentList = document.getElementById("recentList");
+const recentMessage = document.getElementById("recentMessage");
+const RECENT_KEY = "sonara-recent";
+const RECENT_MAX = 20;
+
+function loadRecent() {
+  try {
+    const list = JSON.parse(localStorage.getItem(RECENT_KEY));
+    return Array.isArray(list) ? list : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveRecent(list) {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, RECENT_MAX)));
+  } catch (e) {
+    // Storage full or blocked: recent history just won't persist.
+  }
+}
+
+// Every played track goes to the front; local files are session-only
+// and are never stored.
+function pushRecent(track) {
+  if (!track || track.id == null || track._local) {
+    return;
+  }
+  const summary = trackSummary(track);
+  const list = loadRecent().filter(function (t) {
+    return String(t.id) !== String(summary.id);
+  });
+  list.unshift(summary);
+  saveRecent(list);
+  if (!recentView.hidden) {
+    renderRecent();
+  }
+}
+
+function renderRecent() {
+  const list = loadRecent();
+  recentList.innerHTML = "";
+  recentMessage.hidden = list.length > 0;
+  list.forEach(function (s) {
+    const row = document.createElement("button");
+    row.className = "queue-row";
+    row.setAttribute("aria-label", "Play " + s.title);
+    const art = document.createElement("span");
+    art.className = "q-art";
+    if (s.artwork && s.artwork["150x150"]) {
+      const img = document.createElement("img");
+      img.src = s.artwork["150x150"];
+      img.alt = "";
+      art.appendChild(img);
+    } else {
+      art.appendChild(noteIcon());
+    }
+    const txt = document.createElement("span");
+    txt.className = "q-text";
+    const title = document.createElement("span");
+    title.className = "q-title";
+    title.textContent = s.title;
+    const artist = document.createElement("span");
+    artist.className = "q-artist";
+    artist.textContent = s.artist;
+    txt.appendChild(title);
+    txt.appendChild(artist);
+    row.appendChild(art);
+    row.appendChild(txt);
+    row.addEventListener("click", function () {
+      startQueue([{
+        id: s.id,
+        title: s.title,
+        user: { name: s.artist },
+        artwork: s.artwork
+      }], 0);
+    });
+    recentList.appendChild(row);
+  });
+}
+
+
+// ---------- 19. Local files (Spotify-style "Local Files") ----------
+
+const localFilesBtn = document.getElementById("localFilesBtn");
+const localFileInput = document.getElementById("localFileInput");
+
+localFilesBtn.addEventListener("click", function () {
+  localFileInput.click();
+});
+
+localFileInput.addEventListener("change", function () {
+  const files = Array.prototype.filter.call(
+    localFileInput.files || [],
+    function (f) { return f.type.indexOf("audio/") === 0; }
+  );
+  localFileInput.value = "";
+  if (!files.length) {
+    return;
+  }
+  const tracks = files.map(function (f, i) {
+    const name = f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+    return {
+      id: "local-" + Date.now() + "-" + i,
+      title: name || f.name,
+      user: { name: "Local file" },
+      artwork: null,
+      _objectUrl: URL.createObjectURL(f),
+      _local: true
+    };
+  });
+  startQueue(tracks, 0);
+  showView("queue");
+  showSkipNote(files.length + (files.length === 1 ? " local file" : " local files") +
+    " added to Up Next.");
+});
+
+
+// ---------- 20. Coverflow view for Browse ----------
+
+const gridViewBtn = document.getElementById("gridViewBtn");
+const flowViewBtn = document.getElementById("flowViewBtn");
+const coverflowWrap = document.getElementById("coverflowWrap");
+const coverflow = document.getElementById("coverflow");
+const flowPrev = document.getElementById("flowPrev");
+const flowNext = document.getElementById("flowNext");
+let browseMode = "grid";
+let flowIndex = 0;
+
+function setBrowseMode(mode) {
+  browseMode = mode;
+  const isFlow = mode === "flow";
+  trendingGrid.hidden = isFlow;
+  coverflowWrap.hidden = !isFlow;
+  gridViewBtn.classList.toggle("active", !isFlow);
+  flowViewBtn.classList.toggle("active", isFlow);
+  if (isFlow) {
+    renderCoverflow();
+  }
+}
+
+gridViewBtn.addEventListener("click", function () { setBrowseMode("grid"); });
+flowViewBtn.addEventListener("click", function () { setBrowseMode("flow"); });
+
+function renderCoverflow() {
+  coverflow.innerHTML = "";
+  const tracks = trendingTracks;
+  if (!tracks.length) {
+    return;
+  }
+  flowIndex = Math.max(0, Math.min(flowIndex, tracks.length - 1));
+  tracks.forEach(function (track, i) {
+    const btn = document.createElement("button");
+    btn.className = "flow-item";
+    btn.setAttribute("aria-label", "Play " + track.title);
+    const art = document.createElement("div");
+    art.className = "artwork";
+    const url = artworkUrl(track, "500x500") || artworkUrl(track, "480x480");
+    if (url) {
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = "";
+      art.appendChild(img);
+    } else {
+      art.classList.add("artwork-missing");
+      art.appendChild(noteIcon());
+    }
+    const cap = document.createElement("div");
+    cap.className = "flow-caption";
+    const t = document.createElement("div");
+    t.className = "card-title";
+    t.textContent = track.title;
+    const a = document.createElement("div");
+    a.className = "card-artist";
+    a.textContent = artistName(track);
+    cap.appendChild(t);
+    cap.appendChild(a);
+    btn.appendChild(art);
+    btn.appendChild(cap);
+    btn.addEventListener("click", function () {
+      if (i === flowIndex) {
+        startQueue(trendingTracks, i);
+      } else {
+        flowIndex = i;
+        layoutCoverflow();
+      }
+    });
+    coverflow.appendChild(btn);
+  });
+  layoutCoverflow();
+}
+
+function layoutCoverflow() {
+  const items = coverflow.children;
+  for (let i = 0; i < items.length; i++) {
+    const off = i - flowIndex;
+    const abs = Math.abs(off);
+    if (abs > 4) {
+      items[i].style.opacity = "0";
+      items[i].style.pointerEvents = "none";
+      items[i].style.transform =
+        "translateX(" + (off * 120) + "px) translateZ(-500px)";
+    } else {
+      items[i].style.opacity = String(1 - abs * 0.2);
+      items[i].style.pointerEvents = "auto";
+      let tr = "translateX(" + (off * 170) + "px)" +
+        " translateZ(" + (-abs * 130) + "px)" +
+        " rotateY(" + (off * -48) + "deg)";
+      if (off === 0) {
+        tr += " scale(1.12)";
+      }
+      items[i].style.transform = tr;
+    }
+    items[i].style.zIndex = String(100 - abs);
+  }
+}
+
+flowPrev.addEventListener("click", function () {
+  if (flowIndex > 0) {
+    flowIndex--;
+    layoutCoverflow();
+  }
+});
+flowNext.addEventListener("click", function () {
+  if (flowIndex < trendingTracks.length - 1) {
+    flowIndex++;
+    layoutCoverflow();
+  }
+});
+
+
+// ---------- 21. Sound panel: crossfade ----------
+
+const soundBtn = document.getElementById("soundBtn");
+const soundMenu = document.getElementById("soundMenu");
+const XFADE_OPTIONS = [
+  { v: 0, name: "Off" },
+  { v: 3, name: "3 seconds" },
+  { v: 5, name: "5 seconds" },
+  { v: 8, name: "8 seconds" }
+];
+
+function openSoundMenu() {
+  soundMenu.innerHTML = "";
+  const title = document.createElement("div");
+  title.className = "sound-title";
+  title.textContent = "Sound";
+  const row = document.createElement("div");
+  row.className = "xfade-row";
+  const label = document.createElement("span");
+  label.textContent = "Crossfade between songs";
+  const sel = document.createElement("select");
+  sel.setAttribute("aria-label", "Crossfade length");
+  XFADE_OPTIONS.forEach(function (o) {
+    const opt = document.createElement("option");
+    opt.value = String(o.v);
+    opt.textContent = o.name;
+    if (o.v === xfadeSecs) {
+      opt.selected = true;
+    }
+    sel.appendChild(opt);
+  });
+  sel.addEventListener("change", function () {
+    xfadeSecs = parseInt(sel.value, 10) || 0;
+    localStorage.setItem("sonara-xfade", String(xfadeSecs));
+  });
+  row.appendChild(label);
+  row.appendChild(sel);
+  soundMenu.appendChild(title);
+  soundMenu.appendChild(row);
+
+  // The footer sits at the bottom, so the panel opens upward.
+  const r = soundBtn.getBoundingClientRect();
+  soundMenu.style.bottom = (window.innerHeight - r.top + 6) + "px";
+  soundMenu.style.left = Math.max(8, Math.min(r.left,
+    window.innerWidth - 320)) + "px";
+  soundMenu.hidden = false;
+}
+
+function closeSoundMenu() {
+  soundMenu.hidden = true;
+}
+
+soundBtn.addEventListener("click", function (event) {
+  event.stopPropagation();
+  if (soundMenu.hidden) {
+    openSoundMenu();
+  } else {
+    closeSoundMenu();
+  }
+});
+
+// Clicks inside the panel (like the crossfade dropdown) stay inside.
+soundMenu.addEventListener("click", function (event) {
+  event.stopPropagation();
+});
 
 
 // ---------- 10. Start the app ----------
