@@ -7,6 +7,11 @@
 
 const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
 const path = require("path");
+
+// The display name everywhere: About panel and the user-data
+// folder. (In dev mode the macOS menu bar still shows "Electron"
+// because it is Electron's binary; the packaged DMG shows Sonara.)
+app.setName("Sonara");
 const http = require("http");
 
 let mainWindow = null;
