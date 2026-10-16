@@ -861,3 +861,8 @@ body.mini-window .mini-player {
   background: var(--hover);
   color: var(--text);
 }
+
+/* Sleep timer button glows ember while a timer is running. */
+#sleepBtn.active {
+  color: var(--accent);
+}

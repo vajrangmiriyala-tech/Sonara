@@ -81,6 +81,8 @@ const miniPrev = document.getElementById("miniPrev");
 const miniNext = document.getElementById("miniNext");
 const miniClose = document.getElementById("miniClose");
 const miniPlayerBtn = document.getElementById("miniPlayerBtn");
+const sleepBtn = document.getElementById("sleepBtn");
+const sleepMenu = document.getElementById("sleepMenu");
 
 
 // ---------- 3. Player state ----------
@@ -718,9 +720,10 @@ function closeAddMenu() {
   addMenu.hidden = true;
 }
 
-// Clicking anywhere else closes the menu.
+// Clicking anywhere else closes the menus.
 document.addEventListener("click", function () {
   closeAddMenu();
+  closeSleepMenu();
 });
 
 
@@ -1177,6 +1180,101 @@ miniPlay.addEventListener("click", togglePlay);
 miniPrev.addEventListener("click", prevTrack);
 miniNext.addEventListener("click", nextTrack);
 miniClose.addEventListener("click", closeMiniPlayer);
+
+
+// ---------- Sleep timer ----------
+
+// Pauses the music after a chosen number of minutes, for
+// falling asleep to. Runs on wall-clock time, so it keeps
+// working even as tracks change.
+let sleepMinutes = 0;    // the chosen length, 0 means off
+let sleepTimeout = null; // fires once when the time is up
+let sleepTick = null;     // refreshes the countdown label
+let sleepEndsAt = 0;     // timestamp the timer ends at
+
+function setSleepTimer(minutes) {
+  cancelSleepTimer();
+  sleepMinutes = minutes;
+  if (minutes <= 0) {
+    return;
+  }
+  sleepEndsAt = Date.now() + minutes * 60000;
+  sleepTimeout = setTimeout(fireSleepTimer, minutes * 60000);
+  sleepTick = setInterval(updateSleepButton, 30000);
+  updateSleepButton();
+}
+
+function cancelSleepTimer() {
+  clearTimeout(sleepTimeout);
+  clearInterval(sleepTick);
+  sleepTimeout = null;
+  sleepTick = null;
+  sleepMinutes = 0;
+  sleepBtn.classList.remove("active");
+  sleepBtn.title = "Sleep timer";
+  sleepBtn.setAttribute("aria-label", "Sleep timer");
+}
+
+// Shows roughly how many minutes are left on the button itself.
+function updateSleepButton() {
+  const left = Math.max(1, Math.ceil((sleepEndsAt - Date.now()) / 60000));
+  sleepBtn.classList.add("active");
+  sleepBtn.title = "Sleep timer: about " + left + " min left (click to change)";
+  sleepBtn.setAttribute("aria-label", "Sleep timer, " + left + " minutes left");
+}
+
+function fireSleepTimer() {
+  const wasPlaying = !audio.paused;
+  const length = sleepMinutes;
+  cancelSleepTimer();
+  audio.pause();
+  if (wasPlaying) {
+    showSkipNote("Sleep timer ended after " + length + " minutes.");
+  }
+}
+
+function openSleepMenu() {
+  sleepMenu.innerHTML = "";
+  const options = [
+    { label: "Off", minutes: 0 },
+    { label: "15 minutes", minutes: 15 },
+    { label: "30 minutes", minutes: 30 },
+    { label: "45 minutes", minutes: 45 },
+    { label: "60 minutes", minutes: 60 }
+  ];
+  options.forEach(function (opt) {
+    const item = document.createElement("button");
+    item.className = "add-menu-item";
+    item.textContent = opt.label + (sleepMinutes === opt.minutes ? " (on)" : "");
+    item.addEventListener("click", function (event) {
+      event.stopPropagation();
+      setSleepTimer(opt.minutes);
+      closeSleepMenu();
+    });
+    sleepMenu.appendChild(item);
+  });
+
+  // The footer sits at the bottom of the screen, so the menu
+  // opens upward from the button instead of downward.
+  const r = sleepBtn.getBoundingClientRect();
+  sleepMenu.style.bottom = (window.innerHeight - r.top + 6) + "px";
+  sleepMenu.style.left = Math.max(8, Math.min(r.left,
+    window.innerWidth - 200)) + "px";
+  sleepMenu.hidden = false;
+}
+
+function closeSleepMenu() {
+  sleepMenu.hidden = true;
+}
+
+sleepBtn.addEventListener("click", function (event) {
+  event.stopPropagation();
+  if (sleepMenu.hidden) {
+    openSleepMenu();
+  } else {
+    closeSleepMenu();
+  }
+});
 
 // Inside the Electron Mac app, the native menu's Playback items
 // reach us through window.sonara. In a plain browser this does

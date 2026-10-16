@@ -122,10 +122,17 @@
     <button id="miniPlayerBtn" class="ctrl-btn mini-toggle" aria-label="Open mini player" title="Mini player">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14z"/></svg>
     </button>
+
+    <button id="sleepBtn" class="ctrl-btn mini-toggle" aria-label="Sleep timer" title="Sleep timer">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+    </button>
   </footer>
 
   <!-- Small menu for picking which playlist to add a song to -->
   <div id="addMenu" class="add-menu" hidden></div>
+
+  <!-- Small menu for picking the sleep timer length -->
+  <div id="sleepMenu" class="add-menu" hidden></div>
 
   <!-- Small floating note, shown when a track is skipped -->
   <div id="skipNote" class="skip-note" hidden></div>
