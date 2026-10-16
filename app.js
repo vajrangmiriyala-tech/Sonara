@@ -1021,6 +1021,21 @@ document.addEventListener("keydown", function (event) {
   }
 });
 
+// Inside the Electron Mac app, the native menu's Playback items
+// reach us through window.sonara. In a plain browser this does
+// not exist, so nothing happens there.
+if (window.sonara && window.sonara.onMediaKey) {
+  window.sonara.onMediaKey(function (action) {
+    if (action === "playpause") {
+      togglePlay();
+    } else if (action === "next") {
+      nextTrack();
+    } else if (action === "prev") {
+      prevTrack();
+    }
+  });
+}
+
 
 // ---------- 10. Start the app ----------
 

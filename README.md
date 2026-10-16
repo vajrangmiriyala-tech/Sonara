@@ -10,6 +10,16 @@ Option 1, easiest: double-click `index.html` and it opens in your browser.
 
 Option 2, better for building: open this folder in VS Code, install the Live Server extension, and click "Go Live" at the bottom. The page reloads by itself every time you save a file.
 
+## Run as a Mac app (v0.3)
+
+You need Node.js installed (check with `node --version` in Terminal).
+
+1. Open Terminal in this folder and run `npm install`. This downloads Electron, the tool that turns the web player into a real Mac app.
+2. Run `npm start`. Sonara opens as its own app window, with a real Sonara menu at the top.
+3. To build the DMG that other Mac users can install: run `npm run dist`. The DMG appears in a new `dist` folder.
+
+Note: the DMG is unsigned (Apple charges $99/year for the certificate that removes the warning). On first launch, users right-click the app and choose Open. That is normal for free open-source Mac apps.
+
 ## What v0.1 can do
 
 - Browse trending tracks of the week
