@@ -2,6 +2,10 @@
 
 Sonara is a free and open-source music app for Mac. This is v0.1, the web player. It plays real music through the free Audius API. No account, no ads, no cost.
 
+## Download the Mac app
+
+Grab the latest DMG from the [Releases page](../../releases). Open the DMG, drag Sonara into Applications, and on first launch right-click the app and choose Open.
+
 ## How to run
 
 You need an internet connection, because the songs stream from the Audius API.
