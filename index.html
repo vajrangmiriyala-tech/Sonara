@@ -19,6 +19,14 @@
         <button class="nav-btn" data-view="search">Search</button>
         <button class="nav-btn" data-view="queue">Up Next</button>
       </nav>
+      <div class="playlists-head">
+        <span>Playlists</span>
+        <button id="newPlaylistBtn" class="mini-btn" aria-label="New playlist">+</button>
+      </div>
+      <div id="playlistNew" hidden>
+        <input id="playlistNameInput" type="text" placeholder="Playlist name" maxlength="40" aria-label="Playlist name">
+      </div>
+      <div id="playlistNav"></div>
       <div class="sidebar-foot">Free and open source</div>
     </aside>
 
@@ -48,6 +56,17 @@
         <p class="subtitle">Songs in your current list</p>
         <div id="queueList"></div>
         <p id="queueMessage" class="message">Nothing queued yet. Play something first.</p>
+      </section>
+
+      <!-- Playlist view: songs inside one playlist -->
+      <section id="playlistView" hidden>
+        <h1 id="playlistTitle">Playlist</h1>
+        <p class="subtitle" id="playlistSubtitle"></p>
+        <div class="playlist-actions">
+          <button id="deletePlaylistBtn" class="text-btn">Delete playlist</button>
+        </div>
+        <div id="playlistList"></div>
+        <p id="playlistMessage" class="message" hidden></p>
       </section>
 
     </main>
@@ -88,6 +107,9 @@
       <input id="volumeBar" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volume">
     </div>
   </footer>
+
+  <!-- Small menu for picking which playlist to add a song to -->
+  <div id="addMenu" class="add-menu" hidden></div>
 
   <!-- Small floating note, shown when a track is skipped -->
   <div id="skipNote" class="skip-note" hidden></div>

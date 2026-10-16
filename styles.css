@@ -453,6 +453,173 @@ input[type="range"] {
   text-overflow: ellipsis;
 }
 
+/* ---------- Playlists ---------- */
+
+.playlists-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  margin: 20px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.mini-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: #ececf0;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.mini-btn:hover {
+  background: #e0e0e5;
+}
+
+#playlistNew {
+  padding: 4px 12px;
+}
+
+#playlistNameInput {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+#playlistNameInput:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.nav-btn.playlist-btn {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.playlist-btn .count {
+  font-size: 12px;
+  color: var(--muted);
+  background: #f0f0f3;
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+
+.playlist-actions {
+  margin-bottom: 12px;
+}
+
+.text-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.text-btn:hover {
+  color: var(--accent-dark);
+}
+
+.remove-btn {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+
+.remove-btn:hover {
+  background: #ececf0;
+  color: var(--text);
+}
+
+/* Small popup menu for choosing a playlist */
+.add-menu {
+  position: absolute;
+  z-index: 30;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  min-width: 180px;
+}
+
+.add-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 9px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.add-menu-item:hover {
+  background: #f0f0f3;
+}
+
+.add-menu-empty {
+  padding: 9px 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Small + button on each song card */
+.card-add {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.card:hover .card-add,
+.card:focus .card-add {
+  opacity: 1;
+  transform: none;
+}
+
 /* ---------- Smaller screens ---------- */
 
 @media (max-width: 760px) {
