@@ -30,5 +30,38 @@ contextBridge.exposeInMainWorld("sonara", {
     ipcRenderer.on("spotify-code", function (_event, code) {
       callback(code);
     });
+  },
+
+  // v0.5: offline downloads. The page asks the main process to fetch
+  // a file, and hears back about progress, completion, or failure.
+  // The page itself never touches the file system.
+  downloadTrack: function (payload) {
+    ipcRenderer.send("download-track", payload);
+  },
+  onDownloadProgress: function (callback) {
+    ipcRenderer.on("download-progress", function (_event, data) {
+      callback(data);
+    });
+  },
+  onDownloadDone: function (callback) {
+    ipcRenderer.on("download-done", function (_event, data) {
+      callback(data);
+    });
+  },
+  onDownloadError: function (callback) {
+    ipcRenderer.on("download-error", function (_event, data) {
+      callback(data);
+    });
+  },
+  deleteDownload: function (payload) {
+    ipcRenderer.send("delete-download", payload);
+  },
+
+  // v0.5: smart playback. The main process reports macOS mute changes;
+  // the page pauses the music when the system goes mute.
+  onSystemMuted: function (callback) {
+    ipcRenderer.on("system-muted", function (_event, muted) {
+      callback(muted);
+    });
   }
 });
