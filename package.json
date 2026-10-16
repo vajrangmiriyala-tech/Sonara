@@ -33,7 +33,7 @@
   "main": "main.js",
   "name": "sonara",
   "scripts": {
-    "dist": "electron-builder --mac",
+    "dist": "electron-builder --mac --publish never",
     "start": "electron ."
   },
   "version": "0.4.0"
