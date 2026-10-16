@@ -1,0 +1,55 @@
+# Builds the Sonara Mac DMG on GitHub's own Mac servers and
+# publishes it as a downloadable release. No Mac needed locally.
+name: Build Mac DMG
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm install
+
+      - name: Reassemble app icon
+        run: cat build/icon.p0 build/icon.p1 build/icon.p2 build/icon.p3 build/icon.p4 | base64 --decode > icon.png
+
+      - run: npm run dist
+
+      - name: Upload DMG as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sonara-macOS
+          path: dist/*.dmg
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            TITLE="Sonara ${GITHUB_REF_NAME}"
+          else
+            TAG="latest"
+            TITLE="Sonara (latest build)"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.dmg --clobber
+          else
+            gh release create "$TAG" dist/*.dmg \
+              --title "$TITLE" \
+              --notes "Download the DMG below, open it, and drag Sonara into Applications. On first launch, right-click the app and choose Open."
+          fi
