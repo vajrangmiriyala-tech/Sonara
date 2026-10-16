@@ -23,7 +23,19 @@
         <button class="nav-btn" data-view="queue">Up Next</button>
         <button class="nav-btn" data-view="lyrics">Lyrics</button>
         <button class="nav-btn" data-view="recent">Recent</button>
+        <button class="nav-btn" data-view="downloaded">Downloaded</button>
+        <button class="nav-btn" data-view="library">Library</button>
+        <button class="nav-btn" data-view="stats">Stats</button>
+        <button class="nav-btn" data-view="charts">Charts</button>
       </nav>
+      <div class="playlists-head">
+        <span>Folders</span>
+        <button id="newFolderBtn" class="mini-btn" aria-label="New folder">+</button>
+      </div>
+      <div id="folderNew" hidden>
+        <input id="folderNameInput" type="text" placeholder="Folder name" maxlength="40" aria-label="Folder name">
+      </div>
+      <div id="folderNav"></div>
       <div class="playlists-head">
         <span>Playlists</span>
         <button id="newPlaylistBtn" class="mini-btn" aria-label="New playlist">+</button>
@@ -44,6 +56,9 @@
 
     <!-- Main content area -->
     <main class="main">
+
+      <!-- Offline pill: only visible when the internet is gone -->
+      <div id="offlinePill" class="offline-pill" hidden>Offline</div>
 
       <!-- Browse view: trending tracks -->
       <section id="browseView">
@@ -75,6 +90,15 @@
       <section id="queueView" hidden>
         <h1>Up Next</h1>
         <p class="subtitle">Songs in your current list</p>
+        <div class="queue-actions">
+          <button id="shuffleBtn" class="text-btn">Shuffle</button>
+          <button id="smartShuffleBtn" class="text-btn" aria-pressed="false">Smart shuffle: off</button>
+          <button id="saveQueueBtn" class="text-btn">Save as playlist</button>
+        </div>
+        <div id="saveQueueBox" hidden>
+          <input id="saveQueueInput" type="text" placeholder="Playlist name" maxlength="40" aria-label="New playlist name">
+          <button id="saveQueueGo" class="text-btn">Save</button>
+        </div>
         <div id="queueList"></div>
         <p id="queueMessage" class="message">Nothing queued yet. Play something first.</p>
       </section>
@@ -84,6 +108,9 @@
         <h1 id="playlistTitle">Playlist</h1>
         <p class="subtitle" id="playlistSubtitle"></p>
         <div class="playlist-actions">
+          <button id="refreshMixBtn" class="text-btn" hidden>Refresh mix</button>
+          <button id="downloadAllBtn" class="text-btn">Download all</button>
+          <button id="folderMoveBtn" class="text-btn">Move to folder</button>
           <button id="deletePlaylistBtn" class="text-btn">Delete playlist</button>
         </div>
         <div id="playlistList"></div>
@@ -94,6 +121,11 @@
       <section id="lyricsView" hidden>
         <h1>Lyrics</h1>
         <p class="subtitle" id="lyricsSubtitle"></p>
+        <div class="lyric-styles" aria-label="Lyric display style">
+          <button id="lyrStyleGlow" class="text-btn lyr-style-btn" data-style="glow">Glow</button>
+          <button id="lyrStyleFade" class="text-btn lyr-style-btn" data-style="fade">Fade</button>
+          <button id="lyrStyleRise" class="text-btn lyr-style-btn" data-style="rise">Rise</button>
+        </div>
         <div id="lyricsLines" class="lyrics"></div>
         <p id="lyricsMessage" class="message" hidden></p>
       </section>
@@ -104,6 +136,53 @@
         <p class="subtitle">Your last 20 tracks</p>
         <div id="recentList"></div>
         <p id="recentMessage" class="message">Nothing here yet. Play something first.</p>
+      </section>
+
+      <!-- Downloaded view: songs saved on this Mac, playable offline -->
+      <section id="downloadedView" hidden>
+        <h1>Downloaded</h1>
+        <p class="subtitle" id="downloadedSubtitle">Songs saved on this Mac</p>
+        <div class="dl-actions">
+          <span id="dlStorage" class="dl-storage"></span>
+          <button id="mixtapeBtn" class="text-btn">Build Offline Mixtape</button>
+          <span id="mixtapeStatus" class="dl-storage" hidden></span>
+          <button id="removeAllDlBtn" class="text-btn">Remove all</button>
+        </div>
+        <div id="downloadedList"></div>
+        <p id="downloadedMessage" class="message">Nothing downloaded yet. Tap the download arrow on any song.</p>
+      </section>
+
+      <!-- Library view: your liked songs, artists, and playlists in tabs -->
+      <section id="libraryView" hidden>
+        <h1>Library</h1>
+        <p class="subtitle">Everything you kept</p>
+        <div class="lib-tabs" role="tablist">
+          <button id="libTabSongs" class="lib-tab active" role="tab">Songs</button>
+          <button id="libTabArtists" class="lib-tab" role="tab">Artists</button>
+          <button id="libTabPlaylists" class="lib-tab" role="tab">Playlists</button>
+          <button id="libTabHidden" class="lib-tab" role="tab">Hidden</button>
+        </div>
+        <p id="libArtistFilter" class="lib-filter" hidden></p>
+        <div id="libraryList"></div>
+        <p id="libraryMessage" class="message">Tap the heart on any song to start your library.</p>
+      </section>
+
+      <!-- Stats view: your listening, counted on this Mac only -->
+      <section id="statsView" hidden>
+        <h1>Stats</h1>
+        <p class="subtitle">Counted on this Mac. Nothing leaves your computer.</p>
+        <div id="statsBody"></div>
+        <p id="statsMessage" class="message">Play some music first, then come back.</p>
+      </section>
+
+      <!-- Charts view: top tracks by genre (Audius exposes no language
+           field, verified 2026-10-16, so charts use the genre field) -->
+      <section id="chartsView" hidden>
+        <h1>Charts</h1>
+        <p class="subtitle">What the community is playing, by genre</p>
+        <div id="chartPills" class="chart-pills" role="tablist" aria-label="Genres"></div>
+        <div id="chartsGrid" class="grid"></div>
+        <p id="chartsMessage" class="message">Loading charts...</p>
       </section>
 
     </main>
@@ -118,6 +197,7 @@
       <div class="track-text">
         <div id="playerTitle" class="player-title">Nothing playing</div>
         <div id="playerArtist" class="player-artist">Pick a song to start</div>
+        <span id="offlineBadge" class="offline-badge" hidden>Offline copy</span>
       </div>
     </div>
 
@@ -155,10 +235,31 @@
     <button id="soundBtn" class="ctrl-btn mini-toggle" aria-label="Sound: equalizer and crossfade" title="Sound">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M4 9v6h4l5 5V4L7 9H4zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
     </button>
+
+    <button id="likeBtn" class="ctrl-btn mini-toggle" aria-label="Like this song" title="Like">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+    </button>
+
+    <button id="speedBtn" class="ctrl-btn mini-toggle speed-btn" aria-label="Playback speed" title="Speed">1x</button>
+
+    <button id="radioBtn" class="ctrl-btn mini-toggle" aria-label="Radio: endless similar songs" title="Radio">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 11.55C9.64 9.35 6.48 8 3 8v11c3.48 0 6.64 1.35 9 3.55 2.36-2.19 5.52-3.55 9-3.55V8c-3.48 0-6.64 1.35-9 3.55zM12 8c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3z"/></svg>
+    </button>
+
+    <button id="shareBtn" class="ctrl-btn mini-toggle" aria-label="Share this song" title="Share">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
+    </button>
+
+    <button id="aboutBtn" class="ctrl-btn mini-toggle" aria-label="About this artist" title="About">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+    </button>
   </footer>
 
   <!-- Small menu for picking which playlist to add a song to -->
   <div id="addMenu" class="add-menu" hidden></div>
+
+  <!-- Small menu for picking a folder for the open playlist -->
+  <div id="folderMenu" class="add-menu" hidden></div>
 
   <!-- Small menu for picking the sleep timer length -->
   <div id="sleepMenu" class="add-menu" hidden></div>
