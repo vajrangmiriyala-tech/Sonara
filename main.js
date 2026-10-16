@@ -123,6 +123,187 @@ ipcMain.on("spotify-login", function (_event, authUrl) {
   startSpotifyLogin(authUrl);
 });
 
+
+// ---------- v0.5: Offline downloads ----------
+
+// Downloads live inside the app's own data folder, so removing the
+// app cleans them up too. One file per track, named by track id.
+// The web page keeps the registry (what is downloaded); this process
+// only moves bytes and reports progress.
+
+const fs = require("fs");
+const https = require("https");
+
+function downloadsDir() {
+  const dir = path.join(app.getPath("userData"), "downloads");
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+// Safe file name: Audius ids are already alphanumeric, but we strip
+// anything else anyway so a strange id can never escape the folder.
+// The extension comes from the URL when it has one, else mp3.
+function downloadFileName(trackId, url) {
+  const safeId = String(trackId).replace(/[^a-zA-Z0-9_-]/g, "");
+  let ext = "mp3";
+  const m = /\.([a-z0-9]{2,4})(?:[?#]|$)/i.exec(url || "");
+  if (m) {
+    ext = m[1].toLowerCase();
+  }
+  return safeId + "." + ext;
+}
+
+// Fetches a URL into a file, following up to 3 redirects, and calls
+// onProgress(received, total) as bytes arrive. done(err, received).
+function fetchToFile(url, tmpPath, redirectsLeft, onProgress, done) {
+  let finished = false;
+  function finish(err, received) {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    done(err, received);
+  }
+
+  const req = https.get(url, { timeout: 30000 }, function (res) {
+    // Signed Audius URLs sometimes bounce; follow them.
+    if (res.statusCode >= 300 && res.statusCode < 400 &&
+        res.headers.location && redirectsLeft > 0) {
+      res.resume();
+      fetchToFile(res.headers.location, tmpPath, redirectsLeft - 1,
+        onProgress, finish);
+      return;
+    }
+    if (res.statusCode !== 200) {
+      res.resume();
+      finish(new Error("bad status " + res.statusCode));
+      return;
+    }
+    const total = parseInt(res.headers["content-length"], 10) || 0;
+    let received = 0;
+    const out = fs.createWriteStream(tmpPath);
+    out.on("error", function (err) { finish(err); });
+    res.on("data", function (chunk) {
+      received += chunk.length;
+      onProgress(received, total);
+    });
+    res.on("error", function (err) {
+      out.destroy();
+      finish(err);
+    });
+    res.on("end", function () {
+      out.end(function () { finish(null, received); });
+    });
+    res.pipe(out);
+  });
+  req.on("timeout", function () {
+    req.destroy(new Error("timed out"));
+  });
+  req.on("error", function (err) { finish(err); });
+}
+
+const activeDownloads = {}; // trackId -> true while a download runs
+
+// payload: { trackId, url, title }
+ipcMain.on("download-track", function (event, payload) {
+  const sender = event.sender;
+  const trackId = payload && payload.trackId;
+  const url = payload && payload.url;
+  if (!trackId || !url || activeDownloads[trackId]) {
+    return; // bad input, or a double-tap: never start twice
+  }
+  activeDownloads[trackId] = true;
+
+  const fileName = downloadFileName(trackId, url);
+  const tmpPath = path.join(downloadsDir(), fileName + ".part");
+  const finalPath = path.join(downloadsDir(), fileName);
+
+  fetchToFile(url, tmpPath, 3,
+    function (received, total) {
+      if (!sender.isDestroyed()) {
+        sender.send("download-progress",
+          { trackId: trackId, received: received, total: total });
+      }
+    },
+    function (err) {
+      delete activeDownloads[trackId];
+      if (sender.isDestroyed()) {
+        return;
+      }
+      if (err) {
+        fs.unlink(tmpPath, function () {});
+        // Plain words only, never the raw error.
+        const msg = err.code === "ENOSPC"
+          ? "Your disk is full."
+          : "Download failed. Check your connection and try again.";
+        sender.send("download-error", { trackId: trackId, message: msg });
+        return;
+      }
+      // Rename only when the file is complete, so a half
+      // download can never pass as a finished song.
+      fs.rename(tmpPath, finalPath, function (renameErr) {
+        if (renameErr) {
+          sender.send("download-error",
+            { trackId: trackId, message: "Could not save the file." });
+          return;
+        }
+        let size = 0;
+        try {
+          size = fs.statSync(finalPath).size;
+        } catch (e) {
+          size = 0;
+        }
+        sender.send("download-done",
+          { trackId: trackId, filePath: finalPath, size: size });
+      });
+    });
+});
+
+// payload: { trackId, filePath }
+ipcMain.on("delete-download", function (_event, payload) {
+  const filePath = payload && payload.filePath;
+  if (!filePath) {
+    return;
+  }
+  // Only delete inside our own downloads folder, never anywhere else.
+  const dir = path.resolve(downloadsDir()) + path.sep;
+  const resolved = path.resolve(filePath);
+  if (resolved.indexOf(dir) !== 0) {
+    return;
+  }
+  fs.unlink(resolved, function () {
+    // Missing file is fine: the goal (it being gone) is already true.
+  });
+});
+
+
+// ---------- v0.5: Smart playback: pause when the Mac is muted ----------
+
+// Every 3 seconds we ask macOS whether the system output is muted.
+// Only changes are reported to the page, which pauses the music.
+// macOS only: the whole app is Mac-only, but the guard keeps the
+// code honest if it ever runs anywhere else.
+const { exec } = require("child_process");
+let lastMuted = null;
+
+if (process.platform === "darwin") {
+  setInterval(function () {
+    exec("osascript -e 'output muted of (get volume settings)'",
+      function (err, stdout) {
+        if (err) {
+          return; // a hiccup: try again on the next tick
+        }
+        const muted = /true/i.test(stdout);
+        if (muted !== lastMuted) {
+          lastMuted = muted;
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("system-muted", muted);
+          }
+        }
+      });
+  }, 3000);
+}
+
 app.whenReady().then(function () {
   createWindow();
 
