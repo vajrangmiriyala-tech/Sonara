@@ -28,6 +28,7 @@ Note: the DMG is unsigned (Apple charges $99/year for the certificate that remov
 - Seek bar with time display
 - Volume control
 - Keyboard shortcuts: Space to play/pause, left/right arrows for previous/next track, up/down arrows for volume, M to mute
+- Mini player: tiny always-on-top window in the Mac app, floating card in the browser
 - If a track refuses to play, it skips to the next one and shows a small note
 - Tracks without artwork get a clean placeholder tile, never a broken image
 
@@ -41,7 +42,7 @@ Note: the DMG is unsigned (Apple charges $99/year for the certificate that remov
 ## Roadmap
 
 - v0.2: playlists, queue, synced lyrics
-- v0.3: Electron wrapper, a real Mac app you can download as a DMG, media keys, mini player
+- v0.3: Electron Mac app (DMG), media keys, mini player - done
 - v1.0: themes, sleep timer, equalizer
 
 ## License

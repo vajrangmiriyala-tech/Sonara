@@ -5,10 +5,12 @@
 // in index.html / app.js, which load inside the window.
 // ============================================================
 
-const { app, BrowserWindow, Menu } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain } = require("electron");
 const path = require("path");
 
 let mainWindow = null;
+let miniMode = false;
+let normalBounds = null; // remembers the window size before mini mode
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -39,6 +41,36 @@ function sendMediaKey(action) {
     mainWindow.webContents.send("media-key", action);
   }
 }
+
+// Shrinks the window to the tiny always-on-top mini player,
+// or grows it back to its previous size. The page is told
+// after the resize so it can swap its layout.
+function applyMiniMode(on) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  miniMode = on;
+  if (on) {
+    normalBounds = mainWindow.getBounds();
+    // The window's minimum size must drop first, or the
+    // shrink below would be clamped and do nothing.
+    mainWindow.setMinimumSize(320, 140);
+    mainWindow.setSize(380, 150);
+    mainWindow.setAlwaysOnTop(true);
+  } else {
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setMinimumSize(900, 600);
+    if (normalBounds) {
+      mainWindow.setBounds(normalBounds);
+    }
+  }
+  mainWindow.webContents.send("mini-mode", on);
+}
+
+// The page asks for mini mode through the preload bridge.
+ipcMain.on("set-mini-mode", function (_event, on) {
+  applyMiniMode(!!on);
+});
 
 app.whenReady().then(function () {
   createWindow();
@@ -81,7 +113,13 @@ app.whenReady().then(function () {
       label: "View",
       submenu: [
         { role: "reload" },
-        { role: "toggleDevTools" }
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        {
+          label: "Mini Player",
+          accelerator: "Shift+Cmd+M",
+          click: function () { applyMiniMode(!miniMode); }
+        }
       ]
     },
     {

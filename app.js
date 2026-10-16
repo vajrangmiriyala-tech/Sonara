@@ -72,6 +72,15 @@ const currentTimeLabel = document.getElementById("currentTime");
 const durationLabel = document.getElementById("duration");
 const volumeBar = document.getElementById("volumeBar");
 const skipNote = document.getElementById("skipNote");
+const miniPlayer = document.getElementById("miniPlayer");
+const miniArt = document.getElementById("miniArt");
+const miniTitle = document.getElementById("miniTitle");
+const miniArtist = document.getElementById("miniArtist");
+const miniPlay = document.getElementById("miniPlay");
+const miniPrev = document.getElementById("miniPrev");
+const miniNext = document.getElementById("miniNext");
+const miniClose = document.getElementById("miniClose");
+const miniPlayerBtn = document.getElementById("miniPlayerBtn");
 
 
 // ---------- 3. Player state ----------
@@ -417,6 +426,11 @@ function updatePlayerUI(track) {
   playerTitle.textContent = track.title;
   playerArtist.textContent = artistName(track);
   document.title = track.title + " - " + artistName(track) + " | Sonara";
+
+  // Keep the mini player in sync when it is open.
+  if (miniOpen || !miniPlayer.hidden) {
+    syncMiniTrack();
+  }
 
   // Keep the Up Next list in sync every time a new track starts.
   renderQueue();
@@ -888,10 +902,12 @@ prevButton.addEventListener("click", prevTrack);
 audio.addEventListener("play", function () {
   playButton.innerHTML = PAUSE_SVG;
   playButton.setAttribute("aria-label", "Pause");
+  syncMiniPlayIcon();
 });
 audio.addEventListener("pause", function () {
   playButton.innerHTML = PLAY_SVG;
   playButton.setAttribute("aria-label", "Play");
+  syncMiniPlayIcon();
 });
 
 // Keep the seek bar and time labels in sync with playback,
@@ -1074,6 +1090,94 @@ document.addEventListener("keydown", function (event) {
   }
 });
 
+
+// ---------- Mini player ----------
+
+// True when we run inside the Electron Mac app and can ask it
+// to shrink the window. In a plain browser we show a floating
+// card instead.
+function inElectron() {
+  return !!(window.sonara && window.sonara.setMiniMode);
+}
+
+let miniOpen = false;
+
+function openMiniPlayer() {
+  if (inElectron()) {
+    // The Mac app shrinks the window and then tells us through
+    // onMiniMode, which paints the mini layout.
+    window.sonara.setMiniMode(true);
+    return;
+  }
+  miniOpen = true;
+  document.body.classList.add("mini-open");
+  miniPlayer.hidden = false;
+  syncMiniTrack();
+  syncMiniPlayIcon();
+}
+
+function closeMiniPlayer() {
+  if (inElectron()) {
+    window.sonara.setMiniMode(false);
+    return;
+  }
+  miniOpen = false;
+  document.body.classList.remove("mini-open");
+  miniPlayer.hidden = true;
+}
+
+function toggleMiniPlayer() {
+  if (miniOpen) {
+    closeMiniPlayer();
+  } else {
+    openMiniPlayer();
+  }
+}
+
+// Fill the mini player with the current track's artwork and names.
+function syncMiniTrack() {
+  const track = queue[currentIndex];
+  if (!track) {
+    return;
+  }
+  miniArt.innerHTML = "";
+  miniArt.classList.remove("artwork-missing");
+  const url = artworkUrl(track, "150x150");
+  if (url) {
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "";
+    img.onerror = function () {
+      miniArt.classList.add("artwork-missing");
+      miniArt.innerHTML = "";
+      miniArt.appendChild(noteIcon());
+    };
+    miniArt.appendChild(img);
+  } else {
+    miniArt.classList.add("artwork-missing");
+    miniArt.appendChild(noteIcon());
+  }
+  miniTitle.textContent = track.title;
+  miniArtist.textContent = artistName(track);
+}
+
+// Keep the mini play button's icon in step with the real one.
+function syncMiniPlayIcon() {
+  if (audio.paused) {
+    miniPlay.innerHTML = PLAY_SVG;
+    miniPlay.setAttribute("aria-label", "Play");
+  } else {
+    miniPlay.innerHTML = PAUSE_SVG;
+    miniPlay.setAttribute("aria-label", "Pause");
+  }
+}
+
+miniPlayerBtn.addEventListener("click", toggleMiniPlayer);
+miniPlay.addEventListener("click", togglePlay);
+miniPrev.addEventListener("click", prevTrack);
+miniNext.addEventListener("click", nextTrack);
+miniClose.addEventListener("click", closeMiniPlayer);
+
 // Inside the Electron Mac app, the native menu's Playback items
 // reach us through window.sonara. In a plain browser this does
 // not exist, so nothing happens there.
@@ -1088,6 +1192,40 @@ if (window.sonara && window.sonara.onMediaKey) {
     }
   });
 }
+
+// The Mac app tells us when the window has finished shrinking to
+// (or growing back from) mini size, so we can swap the layout.
+if (window.sonara && window.sonara.onMiniMode) {
+  window.sonara.onMiniMode(function (on) {
+    miniOpen = on;
+    document.body.classList.toggle("mini-window", on);
+    miniPlayer.hidden = !on;
+    if (on) {
+      syncMiniTrack();
+      syncMiniPlayIcon();
+    }
+  });
+}
+
+
+// ---------- 14. Theme: dark or light ----------
+
+// Dark is the default. The choice is saved in localStorage,
+// so it survives closing and reopening the app.
+const themeToggle = document.getElementById("themeToggle");
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("sonara-theme", theme);
+  themeToggle.textContent = theme === "dark" ? "Light mode" : "Dark mode";
+}
+
+themeToggle.addEventListener("click", function () {
+  const current = document.documentElement.getAttribute("data-theme") || "dark";
+  applyTheme(current === "dark" ? "light" : "dark");
+});
+
+applyTheme(localStorage.getItem("sonara-theme") || "dark");
 
 
 // ---------- 10. Start the app ----------

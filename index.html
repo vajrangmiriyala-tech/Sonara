@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sonara</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23fa2d48'/%3E%3Cpath d='M40 10v26.9c-.8-.5-1.8-.8-2.9-.8-3.2 0-5.8 2.6-5.8 5.8s2.6 5.8 5.8 5.8 5.8-2.6 5.8-5.8V22l6-1.6V10H40z' fill='white'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23ff6b35'/%3E%3Cpath d='M40 10v26.9c-.8-.5-1.8-.8-2.9-.8-3.2 0-5.8 2.6-5.8 5.8s2.6 5.8 5.8 5.8 5.8-2.6 5.8-5.8V22l6-1.6V10H40z' fill='white'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -28,7 +28,10 @@
         <input id="playlistNameInput" type="text" placeholder="Playlist name" maxlength="40" aria-label="Playlist name">
       </div>
       <div id="playlistNav"></div>
-      <div class="sidebar-foot">Free and open source</div>
+      <div class="sidebar-foot">
+        <span>Free and open source</span>
+        <button id="themeToggle" class="text-btn">Light mode</button>
+      </div>
     </aside>
 
     <!-- Main content area -->
@@ -115,6 +118,10 @@
       <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
       <input id="volumeBar" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volume">
     </div>
+
+    <button id="miniPlayerBtn" class="ctrl-btn mini-toggle" aria-label="Open mini player" title="Mini player">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14z"/></svg>
+    </button>
   </footer>
 
   <!-- Small menu for picking which playlist to add a song to -->
@@ -122,6 +129,30 @@
 
   <!-- Small floating note, shown when a track is skipped -->
   <div id="skipNote" class="skip-note" hidden></div>
+
+  <!-- Mini player: a tiny always-on-top window in the Mac app,
+       a floating card in the browser -->
+  <div id="miniPlayer" class="mini-player" hidden>
+    <div id="miniArt" class="mini-art artwork-missing">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+    </div>
+    <div class="mini-text">
+      <div id="miniTitle" class="mini-title">Nothing playing</div>
+      <div id="miniArtist" class="mini-artist">Pick a song to start</div>
+    </div>
+    <div class="mini-controls">
+      <button id="miniPrev" class="ctrl-btn" aria-label="Previous track">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M6 6h2v12H6zM18 6l-8.5 6L18 18z"/></svg>
+      </button>
+      <button id="miniPlay" class="ctrl-btn play" aria-label="Play">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <button id="miniNext" class="ctrl-btn" aria-label="Next track">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M16 6h2v12h-2zM6 6l8.5 6L6 18z"/></svg>
+      </button>
+    </div>
+    <button id="miniClose" class="mini-close" aria-label="Close mini player">&#215;</button>
+  </div>
 
   <!-- The single audio element that plays everything -->
   <audio id="audio" preload="metadata"></audio>

@@ -1,19 +1,48 @@
 /* ============================================================
-   Sonara v0.1 styles
-   Apple Music inspired: clean light theme, system font,
-   one red accent color, generous whitespace.
+   Sonara styles - dark-first design system
+   Dark theme is the default. Light theme lives under
+   [data-theme="light"] and is picked with the toggle
+   in the sidebar (saved in localStorage).
+   Design tokens verified 2026-10-16 from the live CSS of
+   Apple Music, Spotify, and YouTube Music: dark-first
+   surfaces, system fonts, small radii, muted gray text.
+   The ember accent (#ff6b35) is Sonara's own.
    ============================================================ */
 
 :root {
+  --bg: #0f0f0f;            /* app background (YT Music's base) */
+  --panel: #181818;         /* sidebar */
+  --elevated: #282828;      /* cards, menus, inputs (Spotify's surface) */
+  --text: #ffffff;
+  --muted: #aaaaaa;         /* secondary text (YT Music's gray) */
+  --border: rgba(255, 255, 255, 0.08);
+  --accent: #ff6b35;        /* Sonara ember */
+  --accent-dark: #e05a2b;
+  --accent-soft: rgba(255, 107, 53, 0.14);
+  --tile: #2a2a2a;          /* artwork placeholder */
+  --hover: rgba(255, 255, 255, 0.07);
+  --pressed: rgba(255, 255, 255, 0.12);
+  --player-bg: rgba(15, 15, 15, 0.85);
+  --lyric-dim: #5c5c60;
+  --radius: 8px;
+}
+
+[data-theme="light"] {
   --bg: #f5f5f7;
   --panel: #ffffff;
+  --elevated: #ffffff;
   --text: #1d1d1f;
   --muted: #6e6e73;
   --border: rgba(0, 0, 0, 0.08);
-  --accent: #fa2d48;          /* Apple Music style red */
-  --accent-dark: #d9263d;
-  --tile: #e8e8ec;            /* placeholder tile for missing artwork */
-  --radius: 10px;
+  --accent: #ff6b35;
+  --accent-dark: #e05a2b;
+  --accent-soft: rgba(255, 107, 53, 0.1);
+  --tile: #e8e8ec;
+  --hover: #f0f0f3;
+  --pressed: #ececf0;
+  --player-bg: rgba(255, 255, 255, 0.88);
+  --lyric-dim: #c9c9ce;
+  --radius: 8px;
 }
 
 * {
@@ -92,11 +121,11 @@ nav {
 }
 
 .nav-btn:hover {
-  background: #f0f0f3;
+  background: var(--hover);
 }
 
 .nav-btn.active {
-  background: #ececf0;
+  background: var(--pressed);
   font-weight: 600;
 }
 
@@ -105,6 +134,10 @@ nav {
   padding: 0 12px;
   font-size: 12px;
   color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 /* ---------- Main content ---------- */
@@ -157,7 +190,7 @@ nav {
   border-radius: var(--radius);
   overflow: hidden;
   background: var(--tile);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 .artwork img {
@@ -165,6 +198,11 @@ nav {
   height: 100%;
   object-fit: cover;
   display: block;
+  transition: transform 0.25s ease;
+}
+
+.card:hover .artwork img {
+  transform: scale(1.03);
 }
 
 /* Placeholder tile shown when a track has no artwork */
@@ -172,7 +210,7 @@ nav {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #aeaeb2;
+  color: var(--muted);
 }
 
 /* Round play button that appears over a card on hover */
@@ -184,8 +222,8 @@ nav {
   height: 40px;
   border-radius: 50%;
   border: none;
-  background: #ffffff;
-  color: var(--text);
+  background: var(--accent);
+  color: #141414;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -193,7 +231,11 @@ nav {
   opacity: 0;
   transform: translateY(4px);
   transition: opacity 0.15s ease, transform 0.15s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.card-play:hover {
+  background: var(--accent-dark);
 }
 
 .card:hover .card-play,
@@ -228,7 +270,7 @@ nav {
   font-size: 15px;
   font-family: inherit;
   color: var(--text);
-  background: var(--panel);
+  background: var(--elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   margin-bottom: 24px;
@@ -237,7 +279,7 @@ nav {
 #searchInput:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(250, 45, 72, 0.12);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 /* ---------- Bottom player bar ---------- */
@@ -252,7 +294,7 @@ nav {
   align-items: center;
   gap: 20px;
   padding: 0 20px;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--player-bg);
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
   border-top: 1px solid var(--border);
@@ -323,14 +365,14 @@ nav {
 }
 
 .ctrl-btn:hover {
-  background: #ececf0;
+  background: var(--hover);
 }
 
 .ctrl-btn.play {
   width: 46px;
   height: 46px;
   background: var(--accent);
-  color: #ffffff;
+  color: #141414;
 }
 
 .ctrl-btn.play:hover {
@@ -375,11 +417,12 @@ input[type="range"] {
   bottom: 88px;
   left: 50%;
   transform: translateX(-50%);
-  background: #1d1d1f;
-  color: #ffffff;
+  background: var(--elevated);
+  color: var(--text);
   font-size: 13px;
   padding: 8px 16px;
   border-radius: 8px;
+  border: 1px solid var(--border);
   z-index: 20;
 }
 
@@ -401,11 +444,11 @@ input[type="range"] {
 }
 
 .queue-row:hover {
-  background: #ececf0;
+  background: var(--hover);
 }
 
 .queue-row.playing {
-  background: rgba(250, 45, 72, 0.08);
+  background: var(--accent-soft);
 }
 
 .q-art {
@@ -418,7 +461,7 @@ input[type="range"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #aeaeb2;
+  color: var(--muted);
 }
 
 .q-art img {
@@ -473,7 +516,7 @@ input[type="range"] {
   height: 24px;
   border-radius: 50%;
   border: none;
-  background: #ececf0;
+  background: var(--pressed);
   color: var(--text);
   font-size: 16px;
   line-height: 1;
@@ -482,7 +525,7 @@ input[type="range"] {
 }
 
 .mini-btn:hover {
-  background: #e0e0e5;
+  background: var(--hover);
 }
 
 #playlistNew {
@@ -495,7 +538,7 @@ input[type="range"] {
   font-size: 13px;
   font-family: inherit;
   color: var(--text);
-  background: var(--bg);
+  background: var(--elevated);
   border: 1px solid var(--border);
   border-radius: 8px;
 }
@@ -514,7 +557,7 @@ input[type="range"] {
 .playlist-btn .count {
   font-size: 12px;
   color: var(--muted);
-  background: #f0f0f3;
+  background: var(--pressed);
   border-radius: 10px;
   padding: 1px 8px;
 }
@@ -534,7 +577,7 @@ input[type="range"] {
 }
 
 .text-btn:hover {
-  color: var(--accent-dark);
+  color: var(--accent);
 }
 
 .remove-btn {
@@ -553,7 +596,7 @@ input[type="range"] {
 }
 
 .remove-btn:hover {
-  background: #ececf0;
+  background: var(--hover);
   color: var(--text);
 }
 
@@ -561,10 +604,10 @@ input[type="range"] {
 .add-menu {
   position: absolute;
   z-index: 30;
-  background: #ffffff;
+  background: var(--elevated);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   padding: 6px;
   min-width: 180px;
 }
@@ -584,7 +627,7 @@ input[type="range"] {
 }
 
 .add-menu-item:hover {
-  background: #f0f0f3;
+  background: var(--hover);
 }
 
 .add-menu-empty {
@@ -602,7 +645,7 @@ input[type="range"] {
   height: 32px;
   border-radius: 50%;
   border: none;
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--elevated);
   color: var(--text);
   display: flex;
   align-items: center;
@@ -611,7 +654,7 @@ input[type="range"] {
   opacity: 0;
   transform: translateY(4px);
   transition: opacity 0.15s ease, transform 0.15s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
 .card:hover .card-add,
@@ -631,7 +674,7 @@ input[type="range"] {
   font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.3px;
-  color: #c9c9ce;
+  color: var(--lyric-dim);
   padding: 7px 0;
   transition: color 0.3s ease;
 }
@@ -688,4 +731,133 @@ input[type="range"] {
   .track-info {
     width: 160px;
   }
+}
+
+
+/* ---------- Mini player ---------- */
+
+/* The toggle button in the now-playing bar. */
+.mini-toggle {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+}
+
+/* Hidden until opened. */
+.mini-player {
+  display: none;
+}
+
+/* Browser mode: a floating card above the now-playing bar. */
+body.mini-open .mini-player {
+  display: flex;
+  position: fixed;
+  right: 20px;
+  bottom: 96px;
+  z-index: 40;
+  align-items: center;
+  gap: 10px;
+  width: 340px;
+  padding: 10px 12px;
+  background: var(--player-bg);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+
+/* Mac app mini-window mode: hide the whole app, the mini
+   player fills the small window instead. */
+body.mini-window .app,
+body.mini-window .player,
+body.mini-window .add-menu,
+body.mini-window .skip-note {
+  display: none;
+}
+
+body.mini-window .mini-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 100vh;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  background: var(--bg);
+}
+
+.mini-art {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--tile);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.mini-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mini-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.mini-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-artist {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.mini-controls .ctrl-btn {
+  width: 34px;
+  height: 34px;
+}
+
+.mini-controls .ctrl-btn.play {
+  width: 38px;
+  height: 38px;
+}
+
+.mini-close {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.mini-close:hover {
+  background: var(--hover);
+  color: var(--text);
 }
