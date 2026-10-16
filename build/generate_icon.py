@@ -1,7 +1,9 @@
 # Generates Sonara's app icon (build/icon.png).
 # Run: python3 build/generate_icon.py  (needs Pillow: pip3 install pillow)
-# Design: white beamed double-note on an ember gradient rounded square.
-from PIL import Image, ImageDraw
+# Design: white beamed-notes glyph on an ember gradient rounded square.
+# The glyph comes from a real font (DejaVu Sans Bold); on the macOS
+# build runner it falls back to any font carrying U+266B.
+from PIL import Image, ImageDraw, ImageFont
 
 S = 1024
 W = (255, 255, 255, 255)
@@ -15,29 +17,39 @@ for y in range(S):
     t = y / (S - 1)
     c = tuple(int(top[i] + (bot[i] - top[i]) * t) for i in range(3)) + (255,)
     bd.line([(0, y), (S, y)], fill=c)
-mask = Image.new("L", (S, S), 0)
+mask = Image.new("L", (S, S), (0,))
 ImageDraw.Draw(mask).rounded_rectangle([0, 0, S, S], radius=230, fill=255)
 img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
 img.paste(bg, (0, 0), mask)
 
 
-def tilted_head(cx, cy, w, h, angle):
-    layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    ImageDraw.Draw(layer).ellipse(
-        [cx - w // 2, cy - h // 2, cx + w // 2, cy + h // 2], fill=W
+def find_font():
+    import subprocess
+
+    out = subprocess.run(
+        ["fc-list", ":charset=266B", "file"], capture_output=True, text=True
     )
-    return layer.rotate(angle, resample=Image.BICUBIC, center=(cx, cy))
+    files = sorted(
+        set(l.split(":")[0].strip() for l in out.stdout.splitlines() if l.strip())
+    )
+    for f in files:
+        if "Bold" in f and f.endswith(".ttf"):
+            return f
+    return files[0] if files else None
 
 
-# Beamed double note, Apple-Music-style but in Sonara ember
-note = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-note = Image.alpha_composite(note, tilted_head(380, 700, 250, 175, -20))
-note = Image.alpha_composite(note, tilted_head(660, 700, 250, 175, -20))
-n = ImageDraw.Draw(note)
-n.rectangle([452, 300, 508, 660], fill=W)   # left stem
-n.rectangle([732, 300, 788, 660], fill=W)   # right stem
-n.polygon([(452, 270), (788, 320), (788, 420), (452, 370)], fill=W)  # beam
+font_path = find_font()
+if not font_path:
+    raise SystemExit("no font with the beamed-notes glyph (U+266B) found")
+font = ImageFont.truetype(font_path, 560)
+glyph = "\u266b"  # beamed eighth notes
+probe = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+bbox = probe.textbbox((0, 0), glyph, font=font)
+gw, gh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+gx, gy = (S - gw) // 2 - bbox[0], (S - gh) // 2 - bbox[1]
 
-img = Image.alpha_composite(img, note)
+layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+ImageDraw.Draw(layer).text((gx, gy), glyph, font=font, fill=W)
+img = Image.alpha_composite(img, layer)
 img.save("build/icon.png")
-print("icon.png generated")
+print("icon.png generated with", font_path)
