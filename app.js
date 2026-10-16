@@ -84,6 +84,7 @@ const miniPlayerBtn = document.getElementById("miniPlayerBtn");
 const sleepBtn = document.getElementById("sleepBtn");
 const sleepMenu = document.getElementById("sleepMenu");
 const spotifyImportBtn = document.getElementById("spotifyImportBtn");
+const textImportBtn = document.getElementById("textImportBtn");
 const modalOverlay = document.getElementById("modalOverlay");
 const modalTitle = document.getElementById("modalTitle");
 const modalBody = document.getElementById("modalBody");
@@ -1620,22 +1621,111 @@ async function importSpotifyPlaylist(playlistId, playlistName) {
       path = json.next ? json.next.replace("https://api.spotify.com/v1", "") : null;
     }
 
-    const summaries = [];
-    for (let i = 0; i < wanted.length; i++) {
-      status.textContent = "Matching " + (i + 1) + " of " + wanted.length + "...";
-      const hit = await findOnAudius(wanted[i].title, wanted[i].artist);
-      if (hit) {
-        const summary = trackSummary(hit);
-        const dup = summaries.some(function (s) { return s.id === summary.id; });
-        if (!dup) {
-          summaries.push(summary);
-        }
-      }
-      // One search at a time, with a small pause to be polite.
-      await new Promise(function (r) { setTimeout(r, 150); });
-    }
+    const summaries = await matchTracks(wanted, status);
 
     const pl = { id: "p" + Date.now(), name: "Spotify: " + playlistName, tracks: summaries };
+    playlists.push(pl);
+    savePlaylists();
+    renderPlaylistNav();
+    closeModal();
+    showPlaylist(pl.id);
+    showSkipNote("Imported " + summaries.length + " of " + wanted.length + " songs.");
+  } catch (err) {
+    modalBody.innerHTML = "";
+    const p = document.createElement("p");
+    p.textContent = "Import failed: " + err.message;
+    modalBody.appendChild(p);
+  }
+}
+
+// Matches a list of {title, artist} against Audius, one at a time,
+// showing progress in the status line. Shared by both importers.
+async function matchTracks(wanted, status) {
+  const summaries = [];
+  for (let i = 0; i < wanted.length; i++) {
+    status.textContent = "Matching " + (i + 1) + " of " + wanted.length + "...";
+    const hit = await findOnAudius(wanted[i].title, wanted[i].artist);
+    if (hit) {
+      const summary = trackSummary(hit);
+      const dup = summaries.some(function (s) { return s.id === summary.id; });
+      if (!dup) {
+        summaries.push(summary);
+      }
+    }
+    // One search at a time, with a small pause to be polite.
+    await new Promise(function (r) { setTimeout(r, 150); });
+  }
+  return summaries;
+}
+
+// Turns pasted text into {title, artist} pairs. Each line is one
+// song: "Artist - Title", or just "Title". Leading numbers like
+// "1." or "01 -" are stripped.
+function parseTrackList(text) {
+  const wanted = [];
+  text.split("\n").forEach(function (raw) {
+    const line = raw.trim().replace(/^[\d.\s\-\)\]]+/, "").trim();
+    if (!line) {
+      return;
+    }
+    let artist = "";
+    let title = line;
+    const dash = line.indexOf(" - ");
+    if (dash !== -1) {
+      artist = line.slice(0, dash).trim();
+      title = line.slice(dash + 3).trim();
+    }
+    if (title) {
+      wanted.push({ title: title, artist: artist });
+    }
+  });
+  return wanted;
+}
+
+// Opens the track-list importer: a name box and a big text box.
+function showTextImport() {
+  openModal("Import track list");
+
+  const hint = document.createElement("p");
+  hint.textContent = "Paste one song per line, like \"Faouzia - Unethical\". " +
+    "Tip: exportify.net turns a Spotify playlist into a copyable list.";
+  modalBody.appendChild(hint);
+
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.placeholder = "Playlist name";
+  nameInput.maxLength = 40;
+  modalBody.appendChild(nameInput);
+
+  const area = document.createElement("textarea");
+  area.placeholder = "Faouzia - Unethical\nNeongen - Way Too Long";
+  area.setAttribute("aria-label", "Track list");
+  modalBody.appendChild(area);
+
+  const btn = document.createElement("button");
+  btn.className = "primary-btn";
+  btn.textContent = "Import";
+  modalBody.appendChild(btn);
+
+  btn.addEventListener("click", function () {
+    const wanted = parseTrackList(area.value);
+    if (wanted.length === 0) {
+      area.focus();
+      return;
+    }
+    importTrackList(nameInput.value.trim() || "Imported list", wanted);
+  });
+}
+
+async function importTrackList(playlistName, wanted) {
+  openModal("Importing " + playlistName);
+  const status = document.createElement("p");
+  status.textContent = "Matching songs...";
+  modalBody.appendChild(status);
+
+  try {
+    const summaries = await matchTracks(wanted, status);
+    const pl = { id: "p" + Date.now(), name: playlistName, tracks: summaries };
     playlists.push(pl);
     savePlaylists();
     renderPlaylistNav();
@@ -1674,6 +1764,10 @@ spotifyImportBtn.addEventListener("click", function () {
     connectSpotify();
   }
 });
+
+// Track-list import: no login needed, works everywhere including
+// the plain browser version.
+textImportBtn.addEventListener("click", showTextImport);
 
 // Inside the Electron Mac app, the native menu's Playback items
 // reach us through window.sonara. In a plain browser this does
