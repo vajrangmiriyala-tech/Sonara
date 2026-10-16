@@ -5,8 +5,9 @@
 // in index.html / app.js, which load inside the window.
 // ============================================================
 
-const { app, BrowserWindow, Menu, ipcMain } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
 const path = require("path");
+const http = require("http");
 
 let mainWindow = null;
 let miniMode = false;
@@ -70,6 +71,51 @@ function applyMiniMode(on) {
 // The page asks for mini mode through the preload bridge.
 ipcMain.on("set-mini-mode", function (_event, on) {
   applyMiniMode(!!on);
+});
+
+
+// ---------- Spotify login ----------
+
+// Spotify sends the user back to a tiny local web server after
+// they approve Sonara. We read the login code from that request,
+// hand it to the page, and shut the server back down. Nothing
+// listens on the network except during those few seconds.
+
+let spotifyServer = null;
+
+function stopSpotifyServer() {
+  if (spotifyServer) {
+    spotifyServer.close();
+    spotifyServer = null;
+  }
+}
+
+function startSpotifyLogin(authUrl) {
+  stopSpotifyServer();
+  spotifyServer = http.createServer(function (req, res) {
+    let code = "";
+    try {
+      const url = new URL(req.url, "http://127.0.0.1:8888");
+      if (url.pathname === "/callback") {
+        code = url.searchParams.get("code") || "";
+      }
+    } catch (e) {
+      code = "";
+    }
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end("<h2 style=\"font-family:sans-serif\">Sonara is connected. You can close this tab.</h2>");
+    if (code && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("spotify-code", code);
+    }
+    stopSpotifyServer();
+  });
+  spotifyServer.listen(8888, "127.0.0.1", function () {
+    shell.openExternal(authUrl);
+  });
+}
+
+ipcMain.on("spotify-login", function (_event, authUrl) {
+  startSpotifyLogin(authUrl);
 });
 
 app.whenReady().then(function () {

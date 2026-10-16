@@ -83,6 +83,11 @@ const miniClose = document.getElementById("miniClose");
 const miniPlayerBtn = document.getElementById("miniPlayerBtn");
 const sleepBtn = document.getElementById("sleepBtn");
 const sleepMenu = document.getElementById("sleepMenu");
+const spotifyImportBtn = document.getElementById("spotifyImportBtn");
+const modalOverlay = document.getElementById("modalOverlay");
+const modalTitle = document.getElementById("modalTitle");
+const modalBody = document.getElementById("modalBody");
+const modalClose = document.getElementById("modalClose");
 
 
 // ---------- 3. Player state ----------
@@ -1273,6 +1278,400 @@ sleepBtn.addEventListener("click", function (event) {
     openSleepMenu();
   } else {
     closeSleepMenu();
+  }
+});
+
+
+// ---------- Spotify import ----------
+
+// Copies your Spotify playlists into Sonara. Spotify only talks
+// to registered apps, so the one-time setup asks for a Client ID
+// from developer.spotify.com (free). Login uses PKCE, the login
+// flow made for apps like this: no secret ever lives in Sonara.
+// Each Spotify song is then matched to a playable Audius track.
+
+const SPOTIFY_AUTH_URL = "https://accounts.spotify.com/authorize";
+const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
+const SPOTIFY_API = "https://api.spotify.com/v1";
+const SPOTIFY_REDIRECT = "http://127.0.0.1:8888/callback";
+const SPOTIFY_SCOPES = "playlist-read-private playlist-read-collaborative";
+
+const LS_SPOTIFY_ID = "sonara-spotify-client-id";
+const LS_SPOTIFY_TOKEN = "sonara-spotify-token";
+const LS_SPOTIFY_REFRESH = "sonara-spotify-refresh";
+const LS_SPOTIFY_EXPIRY = "sonara-spotify-expiry";
+
+function openModal(title) {
+  modalTitle.textContent = title;
+  modalBody.innerHTML = "";
+  modalOverlay.hidden = false;
+}
+
+function closeModal() {
+  modalOverlay.hidden = true;
+}
+
+modalClose.addEventListener("click", closeModal);
+modalOverlay.addEventListener("click", function (event) {
+  if (event.target === modalOverlay) {
+    closeModal();
+  }
+});
+
+// PKCE helpers: a random secret and its SHA-256 fingerprint.
+// The fingerprint goes to Spotify; the secret never leaves Sonara.
+function randomString(length) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    out += chars[bytes[i] % chars.length];
+  }
+  return out;
+}
+
+async function pkceChallenge(verifier) {
+  const data = new TextEncoder().encode(verifier);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  const bytes = new Uint8Array(hash);
+  let bin = "";
+  bytes.forEach(function (b) { bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function spotifyToken() {
+  const token = localStorage.getItem(LS_SPOTIFY_TOKEN);
+  const expiry = parseInt(localStorage.getItem(LS_SPOTIFY_EXPIRY) || "0", 10);
+  if (!token || Date.now() > expiry) {
+    return null;
+  }
+  return token;
+}
+
+function saveSpotifyTokens(json) {
+  localStorage.setItem(LS_SPOTIFY_TOKEN, json.access_token);
+  localStorage.setItem(LS_SPOTIFY_EXPIRY,
+    String(Date.now() + (json.expires_in - 60) * 1000));
+  if (json.refresh_token) {
+    localStorage.setItem(LS_SPOTIFY_REFRESH, json.refresh_token);
+  }
+}
+
+async function refreshSpotifyToken() {
+  const refresh = localStorage.getItem(LS_SPOTIFY_REFRESH);
+  const clientId = localStorage.getItem(LS_SPOTIFY_ID);
+  if (!refresh || !clientId) {
+    throw new Error("Spotify is not connected.");
+  }
+  const res = await fetch(SPOTIFY_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "grant_type=refresh_token&refresh_token=" + encodeURIComponent(refresh) +
+          "&client_id=" + encodeURIComponent(clientId)
+  });
+  if (!res.ok) {
+    throw new Error("Spotify login expired. Connect again.");
+  }
+  const json = await res.json();
+  saveSpotifyTokens(json);
+  return json.access_token;
+}
+
+// One Spotify request, refreshing the login once if it expired.
+async function spotifyFetch(path) {
+  let token = spotifyToken();
+  if (!token) {
+    token = await refreshSpotifyToken();
+  }
+  let res = await fetch(SPOTIFY_API + path, {
+    headers: { Authorization: "Bearer " + token }
+  });
+  if (res.status === 401) {
+    token = await refreshSpotifyToken();
+    res = await fetch(SPOTIFY_API + path, {
+      headers: { Authorization: "Bearer " + token }
+    });
+  }
+  if (!res.ok) {
+    throw new Error("Spotify said no (" + res.status + ").");
+  }
+  return res.json();
+}
+
+// Step 1 of login: open Spotify in the browser. The Mac app runs
+// a tiny local server that catches the login code Spotify sends
+// back, and hands it to the page below.
+async function connectSpotify() {
+  const clientId = localStorage.getItem(LS_SPOTIFY_ID) || "";
+  const verifier = randomString(64);
+  const challenge = await pkceChallenge(verifier);
+  sessionStorage.setItem("sonara-spotify-verifier", verifier);
+  const url = SPOTIFY_AUTH_URL +
+    "?response_type=code&client_id=" + encodeURIComponent(clientId) +
+    "&scope=" + encodeURIComponent(SPOTIFY_SCOPES) +
+    "&redirect_uri=" + encodeURIComponent(SPOTIFY_REDIRECT) +
+    "&code_challenge_method=S256&code_challenge=" + encodeURIComponent(challenge);
+  window.sonara.spotifyLogin(url);
+}
+
+// Step 2 of login: trade the code for tokens.
+async function finishSpotifyLogin(code) {
+  try {
+    const verifier = sessionStorage.getItem("sonara-spotify-verifier") || "";
+    const clientId = localStorage.getItem(LS_SPOTIFY_ID) || "";
+    const res = await fetch(SPOTIFY_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "grant_type=authorization_code&code=" + encodeURIComponent(code) +
+            "&redirect_uri=" + encodeURIComponent(SPOTIFY_REDIRECT) +
+            "&client_id=" + encodeURIComponent(clientId) +
+            "&code_verifier=" + encodeURIComponent(verifier)
+    });
+    if (!res.ok) {
+      throw new Error("Spotify would not give a token.");
+    }
+    saveSpotifyTokens(await res.json());
+    showSpotifyPlaylists();
+  } catch (err) {
+    openModal("Spotify");
+    const p = document.createElement("p");
+    p.textContent = "Login failed: " + err.message;
+    modalBody.appendChild(p);
+  }
+}
+
+if (window.sonara && window.sonara.onSpotifyCode) {
+  window.sonara.onSpotifyCode(function (code) {
+    if (code) {
+      finishSpotifyLogin(code);
+    } else {
+      showSkipNote("Spotify login was cancelled.");
+    }
+  });
+}
+
+// First-run setup: where the Client ID comes from.
+function showSpotifySetup() {
+  openModal("Connect Spotify");
+  const intro = document.createElement("p");
+  intro.textContent = "Spotify only talks to registered apps. This is free and takes two minutes:";
+  const steps = document.createElement("ol");
+  [
+    "Open developer.spotify.com/dashboard and log in.",
+    "Create an app (any name and description will do).",
+    "In the app's Settings, add this Redirect URI:",
+    "Copy the Client ID from the dashboard and paste it below."
+  ].forEach(function (s) {
+    const li = document.createElement("li");
+    li.textContent = s;
+    steps.appendChild(li);
+  });
+  const uri = document.createElement("p");
+  const code = document.createElement("code");
+  code.textContent = SPOTIFY_REDIRECT;
+  uri.appendChild(code);
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "Spotify Client ID";
+  input.setAttribute("aria-label", "Spotify Client ID");
+  const save = document.createElement("button");
+  save.className = "primary-btn";
+  save.textContent = "Save and connect";
+  save.addEventListener("click", function () {
+    const id = input.value.trim();
+    if (!id) {
+      return;
+    }
+    localStorage.setItem(LS_SPOTIFY_ID, id);
+    openModal("Connect Spotify");
+    const p = document.createElement("p");
+    p.textContent = "Your browser opened Spotify. Approve Sonara, then come back here.";
+    modalBody.appendChild(p);
+    connectSpotify();
+  });
+  modalBody.appendChild(intro);
+  modalBody.appendChild(steps);
+  modalBody.appendChild(uri);
+  modalBody.appendChild(input);
+  modalBody.appendChild(save);
+}
+
+async function showSpotifyPlaylists() {
+  openModal("Your Spotify playlists");
+  const loading = document.createElement("p");
+  loading.textContent = "Loading...";
+  modalBody.appendChild(loading);
+  try {
+    const json = await spotifyFetch("/me/playlists?limit=50");
+    modalBody.innerHTML = "";
+    if (!json.items || json.items.length === 0) {
+      const p = document.createElement("p");
+      p.textContent = "No playlists found on your Spotify account.";
+      modalBody.appendChild(p);
+      return;
+    }
+    json.items.forEach(function (pl) {
+      const row = document.createElement("button");
+      row.className = "spotify-pl-row";
+      const name = document.createElement("span");
+      name.textContent = pl.name;
+      const count = document.createElement("span");
+      count.className = "spotify-pl-count";
+      count.textContent = pl.tracks.total + " songs";
+      row.appendChild(name);
+      row.appendChild(count);
+      row.addEventListener("click", function () {
+        importSpotifyPlaylist(pl.id, pl.name);
+      });
+      modalBody.appendChild(row);
+    });
+    const disc = document.createElement("button");
+    disc.className = "text-btn";
+    disc.textContent = "Disconnect Spotify";
+    disc.addEventListener("click", function () {
+      [LS_SPOTIFY_ID, LS_SPOTIFY_TOKEN, LS_SPOTIFY_REFRESH, LS_SPOTIFY_EXPIRY]
+        .forEach(function (k) { localStorage.removeItem(k); });
+      sessionStorage.removeItem("sonara-spotify-verifier");
+      closeModal();
+      showSkipNote("Spotify disconnected.");
+    });
+    modalBody.appendChild(disc);
+  } catch (err) {
+    modalBody.innerHTML = "";
+    const p = document.createElement("p");
+    p.textContent = "Could not load playlists: " + err.message;
+    modalBody.appendChild(p);
+  }
+}
+
+// How alike two song names are, ignoring case and punctuation.
+function normalizeName(s) {
+  return (s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ").trim();
+}
+
+// Scores an Audius result against the Spotify song we want.
+// Exact title is worth the most; the artist breaks ties.
+function matchScore(want, got) {
+  const wt = normalizeName(want.title);
+  const wa = normalizeName(want.artist);
+  const gt = normalizeName(got.title);
+  const ga = normalizeName(got.user && got.user.name);
+  let score = 0;
+  if (gt === wt) {
+    score += 3;
+  } else if (gt.indexOf(wt) !== -1 || wt.indexOf(gt) !== -1) {
+    score += 2;
+  }
+  if (wa && ga === wa) {
+    score += 2;
+  } else if (wa && ga && (ga.indexOf(wa) !== -1 || wa.indexOf(ga) !== -1)) {
+    score += 1;
+  }
+  return score;
+}
+
+// Finds the Spotify song on Audius, where Sonara can play it.
+// Returns null when nothing close enough exists.
+async function findOnAudius(title, artist) {
+  const url = API_BASE + "/tracks/search?query=" +
+    encodeURIComponent(title + " " + artist) + "&app_name=" + APP_NAME;
+  const res = await fetch(url);
+  if (!res.ok) {
+    return null;
+  }
+  const json = await res.json();
+  const results = json.data || [];
+  let best = null;
+  let bestScore = 0;
+  results.slice(0, 5).forEach(function (t) {
+    const s = matchScore({ title: title, artist: artist }, t);
+    if (s > bestScore) {
+      bestScore = s;
+      best = t;
+    }
+  });
+  return bestScore >= 3 ? best : null;
+}
+
+async function importSpotifyPlaylist(playlistId, playlistName) {
+  openModal("Importing " + playlistName);
+  const status = document.createElement("p");
+  status.textContent = "Reading the playlist...";
+  modalBody.appendChild(status);
+
+  try {
+    // Spotify sends 100 songs at a time; follow the pages.
+    const wanted = [];
+    let path = "/playlists/" + playlistId +
+      "/tracks?limit=100&fields=items(track(name,artists(name))),next";
+    while (path) {
+      const json = await spotifyFetch(path);
+      (json.items || []).forEach(function (item) {
+        const t = item.track;
+        if (t && t.name) {
+          wanted.push({
+            title: t.name,
+            artist: (t.artists && t.artists[0] && t.artists[0].name) || ""
+          });
+        }
+      });
+      path = json.next ? json.next.replace("https://api.spotify.com/v1", "") : null;
+    }
+
+    const summaries = [];
+    for (let i = 0; i < wanted.length; i++) {
+      status.textContent = "Matching " + (i + 1) + " of " + wanted.length + "...";
+      const hit = await findOnAudius(wanted[i].title, wanted[i].artist);
+      if (hit) {
+        const summary = trackSummary(hit);
+        const dup = summaries.some(function (s) { return s.id === summary.id; });
+        if (!dup) {
+          summaries.push(summary);
+        }
+      }
+      // One search at a time, with a small pause to be polite.
+      await new Promise(function (r) { setTimeout(r, 150); });
+    }
+
+    const pl = { id: "p" + Date.now(), name: "Spotify: " + playlistName, tracks: summaries };
+    playlists.push(pl);
+    savePlaylists();
+    renderPlaylistNav();
+    closeModal();
+    showPlaylist(pl.id);
+    showSkipNote("Imported " + summaries.length + " of " + wanted.length + " songs.");
+  } catch (err) {
+    modalBody.innerHTML = "";
+    const p = document.createElement("p");
+    p.textContent = "Import failed: " + err.message;
+    modalBody.appendChild(p);
+  }
+}
+
+spotifyImportBtn.addEventListener("click", function () {
+  if (!window.sonara || !window.sonara.spotifyLogin) {
+    openModal("Import from Spotify");
+    const p = document.createElement("p");
+    p.textContent = "Spotify import needs the Sonara Mac app, because the login " +
+      "happens through a tiny server on your own computer. Open Sonara " +
+      "on your Mac and tap this button there.";
+    modalBody.appendChild(p);
+    return;
+  }
+  if (!localStorage.getItem(LS_SPOTIFY_ID)) {
+    showSpotifySetup();
+    return;
+  }
+  if (spotifyToken()) {
+    showSpotifyPlaylists();
+  } else {
+    openModal("Connect Spotify");
+    const p = document.createElement("p");
+    p.textContent = "Your browser opened Spotify. Approve Sonara, then come back here.";
+    modalBody.appendChild(p);
+    connectSpotify();
   }
 });
 

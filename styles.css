@@ -866,3 +866,130 @@ body.mini-window .mini-player {
 #sleepBtn.active {
   color: var(--accent);
 }
+
+/* ---------- Modal dialog ---------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.modal-overlay[hidden] {
+  display: none;
+}
+
+.modal-card {
+  width: 420px;
+  max-width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 0;
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.modal-body {
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+  font-size: 14px;
+}
+
+.modal-body p {
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+
+.modal-body ol {
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0 0 12px;
+  padding-left: 20px;
+}
+
+.modal-body code {
+  color: var(--text);
+  background: var(--tile);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.modal-body input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: var(--tile);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.modal-body .primary-btn {
+  background: var(--accent);
+  color: #141414;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+}
+
+.modal-body .primary-btn:hover {
+  background: var(--accent-dark);
+}
+
+.spotify-pl-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 10px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 14px;
+}
+
+.spotify-pl-row:hover {
+  background: var(--hover);
+}
+
+.spotify-pl-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* Spotify import button in the sidebar. */
+.spotify-btn {
+  margin: 8px 0 4px;
+}

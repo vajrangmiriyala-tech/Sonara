@@ -30,6 +30,7 @@ Note: the DMG is unsigned (Apple charges $99/year for the certificate that remov
 - Keyboard shortcuts: Space to play/pause, left/right arrows for previous/next track, up/down arrows for volume, M to mute
 - Mini player: tiny always-on-top window in the Mac app, floating card in the browser
 - Sleep timer: pauses the music after 15, 30, 45, or 60 minutes
+- Spotify import: connect your Spotify account and copy any playlist into Sonara (Mac app)
 - If a track refuses to play, it skips to the next one and shows a small note
 - Tracks without artwork get a clean placeholder tile, never a broken image
 

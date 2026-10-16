@@ -28,6 +28,7 @@
         <input id="playlistNameInput" type="text" placeholder="Playlist name" maxlength="40" aria-label="Playlist name">
       </div>
       <div id="playlistNav"></div>
+      <button id="spotifyImportBtn" class="text-btn spotify-btn">Import from Spotify</button>
       <div class="sidebar-foot">
         <span>Free and open source</span>
         <button id="themeToggle" class="text-btn">Light mode</button>
@@ -133,6 +134,17 @@
 
   <!-- Small menu for picking the sleep timer length -->
   <div id="sleepMenu" class="add-menu" hidden></div>
+
+  <!-- Modal dialog: Spotify setup, playlist picker, import progress -->
+  <div id="modalOverlay" class="modal-overlay" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <span id="modalTitle" class="modal-title"></span>
+        <button id="modalClose" class="mini-close" aria-label="Close">&#215;</button>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
 
   <!-- Small floating note, shown when a track is skipped -->
   <div id="skipNote" class="skip-note" hidden></div>

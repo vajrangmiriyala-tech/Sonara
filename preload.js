@@ -22,5 +22,13 @@ contextBridge.exposeInMainWorld("sonara", {
     ipcRenderer.on("mini-mode", function (_event, on) {
       callback(on);
     });
+  },
+  spotifyLogin: function (authUrl) {
+    ipcRenderer.send("spotify-login", authUrl);
+  },
+  onSpotifyCode: function (callback) {
+    ipcRenderer.on("spotify-code", function (_event, code) {
+      callback(code);
+    });
   }
 });
