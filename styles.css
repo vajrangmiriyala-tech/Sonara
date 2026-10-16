@@ -1201,3 +1201,855 @@ body.mini-window .mini-player {
   padding: 6px 8px;
   cursor: pointer;
 }
+
+/* ============================================================
+   v0.5: liquid glass + cinematic motion (reel effects, step 1)
+   Reel 1 (Raylight promo): 3D tilt, slow push-ins, staggered
+   word reveals, animated ember gradient. Borrowed as visual
+   ideas only, hand-built in CSS/JS.
+   Reel 2 (liquidGL "Liquid Glass"): frosted panes, specular
+   rims, cursor tilt. Recreated in pure CSS, no library added.
+   Hallmark gates honored: no purple/blue gradients, no pill
+   buttons, no fake metrics, no emoji, no em-dashes in copy.
+   Every animation below moves transform or opacity only,
+   except the wordmark gradient (background-position on a
+   6-letter word; documented below).
+   ============================================================ */
+
+:root {
+  /* WHY each token exists (taste-skill: tokens carry their reason) */
+  --glass-bg: rgba(20, 20, 20, 0.55);
+  --glass-bg: color-mix(in srgb, var(--panel) 62%, transparent);
+  /* WHY color-mix: the glass tints itself from the active theme's
+     panel color, so midnight/forest/sunset keep their mood instead
+     of turning flat gray. The rgba line above is the fallback for
+     older browsers, which ignore the color-mix line. */
+  --glass-border: rgba(255, 255, 255, 0.16);
+  /* WHY: a hairline light edge sells the thickness of glass. */
+  --glass-sheen: rgba(255, 255, 255, 0.07);
+  /* WHY: the specular highlight color, kept very faint so text
+     stays readable underneath it. */
+  --ember-hi: #ffb03a;
+  /* WHY: amber end of the wordmark gradient. Ember tones only,
+     per the no-purple/blue rule. */
+  --ease-cinema: cubic-bezier(0.22, 1, 0.36, 1);
+  /* WHY: one shared cinematic easing so every v0.5 motion feels
+     like the same app, never snappy. */
+}
+
+[data-theme="light"] {
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-bg: color-mix(in srgb, var(--panel) 62%, transparent);
+  --glass-border: rgba(0, 0, 0, 0.1);
+  --glass-sheen: rgba(255, 255, 255, 0.35);
+}
+
+/* ---------- A. Now-playing bar: floating liquid-glass card ---------- */
+
+/* Room for the floating card (was 84px for the old edge-to-edge bar). */
+.app {
+  padding-bottom: 92px;
+}
+
+.player {
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  border-radius: 20px; /* liquidGL pane radius */
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+/* Animated specular rim: a diagonal light band drifts slowly across
+   the glass, clipped by the card's own radius. pointer-events none
+   so every button under it still works. */
+.player::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 20px;
+  background: linear-gradient(115deg,
+    transparent 42%, var(--glass-sheen) 50%, transparent 58%);
+  animation: sheen-drift 9s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes sheen-drift {
+  from { transform: translateX(-6%); }
+  to { transform: translateX(6%); }
+}
+
+/* ---------- Mini player: the same liquid-glass treatment ---------- */
+
+body.mini-open .mini-player {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.mini-player::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 20px;
+  background: linear-gradient(115deg,
+    transparent 42%, var(--glass-sheen) 50%, transparent 58%);
+  animation: sheen-drift 9s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+/* In the Mac app's tiny window the mini player is not positioned,
+   so the sheen needs a positioning context of its own. */
+body.mini-window .mini-player {
+  position: relative;
+}
+
+/* ---------- B. Track cards: hover lift, specular sweep, cursor tilt ---------- */
+
+.card {
+  transition: transform 0.35s var(--ease-cinema);
+}
+
+.card:hover {
+  transform: translateY(-4px) scale(1.04);
+}
+
+/* The artwork box tilts toward the cursor. --rx/--ry are set by
+   JavaScript on mousemove and eased back to 0 on leave. */
+.artwork {
+  transform: perspective(1200px)
+             rotateX(var(--rx, 0deg))
+             rotateY(var(--ry, 0deg));
+  transition: transform 0.18s ease-out;
+}
+
+/* Specular sweep: a light band crosses the artwork on hover. */
+.artwork::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius);
+  background: linear-gradient(115deg,
+    transparent 30%, rgba(255, 255, 255, 0.18) 48%, transparent 62%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.card:hover .artwork::after {
+  opacity: 1;
+  animation: sheen-sweep 0.9s ease;
+}
+
+@keyframes sheen-sweep {
+  from { transform: translateX(-130%) skewX(-12deg); }
+  to { transform: translateX(130%) skewX(-12deg); }
+}
+
+/* ---------- C. Staggered fade-up reveals on headlines ---------- */
+
+/* JavaScript wraps each headline word in .rw with a 120ms stagger. */
+.rw {
+  display: inline-block;
+  opacity: 0;
+  animation: word-up 0.8s var(--ease-cinema) forwards;
+}
+
+@keyframes word-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- D. Wordmark: slow animated ember gradient ---------- */
+
+/* The one deliberate exception to transform/opacity-only: a text
+   gradient can only move via background-position. It is 6 letters,
+   so the paint cost is negligible. Ember tones only. */
+.wordmark {
+  background: linear-gradient(100deg,
+    var(--accent), var(--ember-hi), var(--accent));
+  background-size: 220% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: ember-flow 7s ease-in-out infinite;
+}
+
+@keyframes ember-flow {
+  0%, 100% { background-position: 0% center; }
+  50% { background-position: 100% center; }
+}
+
+/* ---------- E. Now-playing artwork: ultra-slow push-in loop ---------- */
+
+.player-art img {
+  animation: art-push 16s ease-in-out infinite alternate;
+}
+
+@keyframes art-push {
+  from { transform: scale(1); }
+  to { transform: scale(1.1); }
+}
+
+/* ---------- v0.5: offline downloads ---------- */
+
+/* --offline-amber: the color of "you are offline" states.
+   WHY: offline needs its own color so it never reads as branding.
+   The ember accent means Sonara; amber is the universal
+   "no connection" hue, so the pill and badge scan instantly. */
+:root {
+  --offline-amber: #e8a33d;
+}
+
+/* Download arrow on each song card. Mirrors .card-add, but sits on
+   the right so the two never overlap. Only rendered when the artist
+   allowed downloads. */
+.card-dl {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--elevated);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.card:hover .card-dl,
+.card:focus .card-dl {
+  opacity: 1;
+  transform: none;
+}
+
+/* While downloading, the % stays visible without hovering. */
+.card-dl.downloading {
+  opacity: 1;
+  transform: none;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* Download button inside list rows. Same 28px circle language as
+   .remove-btn, so rows stay visually calm. */
+.dl-btn {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dl-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* While downloading, the button itself becomes the progress readout.
+   No new component needed; the number replaces the arrow. */
+.dl-btn.downloading {
+  color: var(--accent);
+  cursor: default;
+  font-size: 10px;
+}
+
+.dl-btn.downloading:hover {
+  background: transparent;
+  color: var(--accent);
+}
+
+/* Downloaded: a quiet ember checkmark. Tapping it arms removal. */
+.dl-btn.done {
+  color: var(--accent);
+}
+
+/* Armed state asks "remove?" without a popup dialog. */
+.dl-btn.armed {
+  color: #e5484d;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* The Offline pill: fixed top-right of the main area, only visible
+   when the internet is gone. Rectangular, not a pill button shape,
+   so it reads as status, not as something to tap. */
+.offline-pill {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  z-index: 40;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--elevated);
+  border: 1px solid var(--offline-amber);
+  color: var(--offline-amber);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+
+/* Tiny badge in the now-playing bar: this song is the saved copy. */
+.offline-badge {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(232, 163, 61, 0.14);
+  color: var(--offline-amber);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+
+/* Header row of the Downloaded view: storage used + remove-all. */
+.dl-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 14px;
+}
+
+.dl-storage {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Rows for songs that cannot play right now (offline, not saved).
+   Dimmed, not hidden: the user still sees what is missing. */
+.q-row-offline {
+  opacity: 0.45;
+}
+
+/* ---------- F. Respect reduced motion: all of it switches off ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .player::before,
+  .mini-player::before,
+  .wordmark,
+  .player-art img,
+  .card:hover .artwork::after {
+    animation: none;
+  }
+  .rw {
+    animation: none;
+    opacity: 1;
+  }
+  .card,
+  .card:hover,
+  .artwork {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* ============================================================
+   v0.5: 11 roadmap features (step 3)
+   One shared language: quiet buttons that only speak on hover,
+   ember reserved for "active / yours". Nothing here invents a new
+   visual dialect; every control mirrors an existing one.
+   ============================================================ */
+
+/* --like-red: the heart's "liked" color.
+   WHY: a heart must read as a heart, not as branding. Soft red is
+   the universal "loved" hue; ember stays reserved for Sonara's own
+   actions (play, downloads, timers). */
+:root {
+  --like-red: #f2555a;
+}
+
+/* ---------- 1. Liked Songs: heart buttons ---------- */
+
+/* Heart on each song card. Sits top-left so it never fights the
+   + (top-right) or the download arrow (bottom-right). */
+.card-like {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--elevated);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.card:hover .card-like,
+.card:focus .card-like,
+.card-like.liked {
+  opacity: 1;
+  transform: none;
+}
+
+/* A liked heart stays visible and turns love-red. */
+.card-like.liked {
+  color: var(--like-red);
+}
+
+/* Heart inside list rows. Same 28px circle language as .dl-btn,
+   so rows stay visually calm no matter how many buttons they hold. */
+.like-btn {
+  margin-left: 4px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.like-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.like-btn.liked {
+  color: var(--like-red);
+}
+
+.like-btn.liked:hover {
+  background: var(--hover);
+  color: var(--like-red);
+}
+
+/* The heart in the now-playing bar lights up for the current song. */
+#likeBtn.liked {
+  color: var(--like-red);
+}
+
+/* ---------- 4. Better queue: drag reorder + move buttons ---------- */
+
+/* The row being dragged goes ghost-quiet so the gap reads clearly. */
+.queue-row.dragging {
+  opacity: 0.35;
+}
+
+/* A 2px ember line marks exactly where the row will land. */
+.queue-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.queue-row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Tiny up/down movers: the keyboard-and-touch alternative to dragging.
+   Hidden until the row is hovered or focused, so calm rows stay calm. */
+.q-move {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.queue-row:hover .q-move,
+.queue-row:focus-within .q-move {
+  opacity: 1;
+}
+
+.q-move:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* Save-as-playlist row under the Up Next header. Mirrors the
+   sidebar's inline playlist-name box pattern. */
+.queue-actions {
+  margin: 0 0 12px;
+}
+
+#saveQueueBox {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 12px;
+  max-width: 420px;
+}
+
+#saveQueueBox[hidden] {
+  display: none;
+}
+
+#saveQueueInput {
+  flex: 1;
+  background: var(--tile);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 12px;
+}
+
+/* ---------- 5. Radio mode toggle ---------- */
+
+/* Lit ember while radio is on, mirroring the sleep timer's glow. */
+#radioBtn.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ---------- 6. Playback speed button ---------- */
+
+/* The button shows text ("1x") instead of an icon, so it needs
+   a smaller, bolder label to sit well among the icon buttons. */
+.speed-btn {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--muted);
+}
+
+.speed-btn.fast {
+  color: var(--accent);
+}
+
+/* ---------- 7. Library tabs ---------- */
+
+.lib-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0 16px;
+}
+
+/* Text tabs, not pills: the app's tab language is flat labels
+   with an ember underline for the active one (see view toggles). */
+.lib-tab {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 14px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.lib-tab:hover {
+  color: var(--text);
+}
+
+.lib-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* "Showing songs by X · clear" line when an artist is picked. */
+.lib-filter {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.lib-filter button {
+  margin-left: 8px;
+}
+
+/* ---------- 2. Stats view ---------- */
+
+.stat-block {
+  margin-bottom: 28px;
+  max-width: 560px;
+}
+
+.stat-block h2 {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+
+.stat-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.stat-rank {
+  width: 22px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stat-sub {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stat-big {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+.stat-big-label {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+/* ---------- 10. Lyric display styles ---------- */
+
+/* Three looks for the synced line, picked in the Lyrics view.
+   The class lives on #lyricsLines; only the active line changes. */
+.lyric-styles {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+
+.lyr-style-btn.active {
+  color: var(--accent);
+}
+
+/* Glow (default): the sung line burns ember, like the v0.4 look. */
+#lyricsLines.lyr-glow .lyric-line.active {
+  color: var(--accent);
+  text-shadow: 0 0 18px var(--accent-soft);
+}
+
+/* Fade: everything dims except the sung line, which stays paper. */
+#lyricsLines.lyr-fade .lyric-line {
+  opacity: 0.35;
+}
+
+#lyricsLines.lyr-fade .lyric-line.active {
+  opacity: 1;
+  color: var(--text);
+}
+
+/* Rise: the sung line lifts a touch, like a karaoke bounce. */
+#lyricsLines.lyr-rise .lyric-line.active {
+  color: var(--text);
+  transform: translateY(-3px);
+}
+
+/* ---------- 8. Track story (Wikipedia panel) ---------- */
+
+/* The story reuses the app's modal; only the thumbnail needs styling. */
+.story-thumb {
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 10px;
+  margin-bottom: 12px;
+  display: block;
+}
+
+.story-extract {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+/* ---------- 11. Smart playback: muted / device notes ---------- */
+
+/* No new visuals: smart playback speaks through the existing
+   skip-note toast, so there is nothing new to learn. */
+
+/* Icon inside the Liked Songs / Weekly Mix sidebar buttons.
+   Same 16px language as the card button icons, so the sidebar
+   stays visually quiet. */
+.pl-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.pl-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---------- 26. v0.5: 9 new features (step 4) ---------- */
+
+/* Genre filter chips on the Charts view. WHY rectangular (10px) and not
+   fully pill-shaped: the design rules ban pill buttons; the chip row is
+   a filter pattern, not a call to action. The active chip wears the
+   ember accent so the current filter reads at a glance. */
+.chart-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 18px;
+}
+.chart-pill {
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.chart-pill:hover {
+  border-color: var(--ember);
+}
+.chart-pill.active {
+  border-color: var(--ember);
+  color: var(--ember);
+}
+
+/* Quiet inline tags. WHY one shared look: "Suggested" (smart shuffle)
+   and "Hidden" (still-visible playlist rows) are both metadata, not
+   buttons, so they share the same whisper-quiet treatment. */
+.suggested-tag,
+.hidden-tag {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 7px;
+  margin-left: 8px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* Hide button on cards: top-right, mirroring the heart top-left.
+   Same 32px circle language as .card-like so the card stays calm. */
+.card-hide {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--elevated);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+.card:hover .card-hide,
+.card:focus .card-hide,
+.card-hide.on {
+  opacity: 1;
+  transform: none;
+}
+.card-hide.on {
+  color: var(--ember);
+}
+/* Hide button inside playlist rows: plain text button like its
+   heart and download neighbors. */
+.hide-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px;
+  display: inline-flex;
+  align-items: center;
+}
+.hide-btn:hover {
+  color: var(--text);
+}
+.hide-btn.on {
+  color: var(--ember);
+}
+
+/* Sidebar folders. WHY indented members: the indent is the only
+   hierarchy cue needed; no extra icons, no extra colors. */
+.folder-row .folder-caret {
+  display: inline-flex;
+  width: 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.folder-item {
+  padding-left: 30px;
+}
+
+/* Small explainer under the DJ voice controls. WHY muted and small:
+   it is a footnote, not a feature pitch. */
+.dj-note {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 0 2px;
+}
+
+/* Recap block at the end of the Stats view. WHY the same stat-block
+   language: it is the same data story, just the yearly chapter. */
+.recap-block {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.recap-block h2 {
+  font-size: 20px;
+  margin: 0 0 4px;
+}
+.recap-cap {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 14px;
+}
