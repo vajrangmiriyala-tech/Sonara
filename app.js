@@ -13,7 +13,8 @@
 //   9. The Up Next list
 //  10. Playlists (saved in the browser)
 //  11. Wiring up buttons and the audio element
-//  12. Start the app
+//  12. Synced lyrics
+//  13. Start the app
 // ============================================================
 
 
@@ -53,6 +54,10 @@ const playlistList = document.getElementById("playlistList");
 const playlistMessage = document.getElementById("playlistMessage");
 const deletePlaylistBtn = document.getElementById("deletePlaylistBtn");
 const addMenu = document.getElementById("addMenu");
+const lyricsView = document.getElementById("lyricsView");
+const lyricsSubtitle = document.getElementById("lyricsSubtitle");
+const lyricsLines = document.getElementById("lyricsLines");
+const lyricsMessage = document.getElementById("lyricsMessage");
 const navButtons = document.querySelectorAll(".nav-btn");
 
 const audio = document.getElementById("audio");
@@ -415,6 +420,9 @@ function updatePlayerUI(track) {
 
   // Keep the Up Next list in sync every time a new track starts.
   renderQueue();
+
+  // Fetch lyrics for the new track in the background.
+  loadLyrics(track);
 }
 
 
@@ -702,6 +710,174 @@ document.addEventListener("click", function () {
 });
 
 
+// ---------- 12. Synced lyrics ----------
+
+// Lyrics come from lrclib, a free lyrics database. No API key needed.
+// We ask by artist and song name. The answer has syncedLyrics
+// (lines with timestamps like [01:23.45]) and plainLyrics (plain text).
+const LYRIC_API = "https://lrclib.net/api/get";
+
+let lyricLines = [];   // [{ time: seconds, text: "line" }], sorted by time
+let lyricPlain = "";   // plain text fallback when no timestamps exist
+let lyricState = "idle"; // idle | loading | synced | plain | none
+let lyricTrackId = null; // which song these lyrics belong to
+let lastActiveLine = -1;
+const lyricCache = {}; // song id -> { lines, plain } or null when none found
+
+// Turns "[01:23.45] hello" into { time: 83.45, text: "hello" }.
+function parseLRC(lrcText) {
+  const lines = [];
+  const pattern = /\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/;
+  lrcText.split("\n").forEach(function (raw) {
+    const m = pattern.exec(raw);
+    if (!m) {
+      return;
+    }
+    const mins = parseInt(m[1], 10);
+    const secs = parseInt(m[2], 10);
+    const frac = m[3].length === 3 ? parseInt(m[3], 10) / 1000
+                                   : parseInt(m[3], 10) / 100;
+    const text = m[4].trim();
+    if (text) {
+      lines.push({ time: mins * 60 + secs + frac, text: text });
+    }
+  });
+  lines.sort(function (a, b) { return a.time - b.time; });
+  return lines;
+}
+
+// Fetches lyrics for a track. Results are cached, so each song
+// is looked up only once no matter how often it plays.
+async function loadLyrics(track) {
+  lyricTrackId = track.id;
+  lyricState = "loading";
+  lyricLines = [];
+  lyricPlain = "";
+  lastActiveLine = -1;
+  if (!lyricsView.hidden) {
+    renderLyrics();
+  }
+
+  if (lyricCache[track.id] !== undefined) {
+    useLyricResult(track.id, lyricCache[track.id]);
+    return;
+  }
+
+  try {
+    const url = LYRIC_API +
+      "?artist_name=" + encodeURIComponent(artistName(track)) +
+      "&track_name=" + encodeURIComponent(track.title);
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error("no lyrics");
+    }
+    const json = await response.json();
+    const lines = json.syncedLyrics ? parseLRC(json.syncedLyrics) : [];
+    const plain = json.plainLyrics || "";
+    const result = (lines.length > 0 || plain) ? { lines: lines, plain: plain }
+                                              : null;
+    lyricCache[track.id] = result;
+    useLyricResult(track.id, result);
+  } catch (error) {
+    lyricCache[track.id] = null;
+    useLyricResult(track.id, null);
+  }
+}
+
+// Applies a lyrics result, but only if the user has not
+// switched to another song while we were fetching.
+function useLyricResult(trackId, result) {
+  if (lyricTrackId !== trackId) {
+    return;
+  }
+  if (result && result.lines.length > 0) {
+    lyricLines = result.lines;
+    lyricState = "synced";
+  } else if (result && result.plain) {
+    lyricPlain = result.plain;
+    lyricState = "plain";
+  } else {
+    lyricState = "none";
+  }
+  if (!lyricsView.hidden) {
+    renderLyrics();
+    updateLyricHighlight();
+  }
+}
+
+// Draws the lyrics view from the current state.
+function renderLyrics() {
+  lyricsLines.innerHTML = "";
+  lastActiveLine = -1;
+
+  const track = queue[currentIndex];
+  if (!track) {
+    lyricsSubtitle.textContent = "";
+    lyricsMessage.textContent = "Play a song to see its lyrics.";
+    lyricsMessage.hidden = false;
+    return;
+  }
+
+  lyricsSubtitle.textContent = track.title + " - " + artistName(track);
+
+  if (lyricState === "loading" || lyricState === "idle") {
+    lyricsMessage.textContent = "Finding lyrics...";
+    lyricsMessage.hidden = false;
+    return;
+  }
+
+  if (lyricState === "none") {
+    lyricsMessage.textContent = "No lyrics found for this song.";
+    lyricsMessage.hidden = false;
+    return;
+  }
+
+  lyricsMessage.hidden = true;
+
+  if (lyricState === "synced") {
+    lyricLines.forEach(function (line) {
+      const div = document.createElement("div");
+      div.className = "lyric-line";
+      div.textContent = line.text;
+      lyricsLines.appendChild(div);
+    });
+  } else {
+    const div = document.createElement("div");
+    div.className = "lyric-plain";
+    div.textContent = lyricPlain;
+    lyricsLines.appendChild(div);
+  }
+}
+
+// Lights up the line matching the current playback time
+// and scrolls it into view.
+function updateLyricHighlight() {
+  if (lyricLines.length === 0 || lyricsView.hidden) {
+    return;
+  }
+  const t = audio.currentTime;
+  let active = -1;
+  for (let i = 0; i < lyricLines.length; i++) {
+    if (lyricLines[i].time <= t) {
+      active = i;
+    } else {
+      break;
+    }
+  }
+  if (active === lastActiveLine) {
+    return;
+  }
+  lastActiveLine = active;
+  const rows = lyricsLines.querySelectorAll(".lyric-line");
+  rows.forEach(function (row, i) {
+    row.classList.toggle("active", i === active);
+  });
+  if (active >= 0 && rows[active]) {
+    rows[active].scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+}
+
+
 // ---------- 9. Wiring up buttons and the audio element ----------
 
 playButton.addEventListener("click", togglePlay);
@@ -718,12 +894,14 @@ audio.addEventListener("pause", function () {
   playButton.setAttribute("aria-label", "Play");
 });
 
-// Keep the seek bar and time labels in sync with playback.
+// Keep the seek bar and time labels in sync with playback,
+// and move the lyric highlight as the song plays.
 audio.addEventListener("timeupdate", function () {
   currentTimeLabel.textContent = formatTime(audio.currentTime);
   if (audio.duration) {
     seekBar.value = (audio.currentTime / audio.duration) * 1000;
   }
+  updateLyricHighlight();
 });
 
 // Once the track metadata loads we know the full duration.
@@ -759,6 +937,7 @@ function showView(view) {
   searchView.hidden = view !== "search";
   queueView.hidden = view !== "queue";
   playlistView.hidden = view !== "playlist";
+  lyricsView.hidden = view !== "lyrics";
 
   navButtons.forEach(function (other) {
     other.classList.toggle("active", other.dataset.view === view);
@@ -774,6 +953,10 @@ function showView(view) {
   }
   if (view === "queue") {
     renderQueue();
+  }
+  if (view === "lyrics") {
+    renderLyrics();
+    updateLyricHighlight();
   }
 }
 

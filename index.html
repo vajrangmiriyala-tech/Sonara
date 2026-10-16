@@ -18,6 +18,7 @@
         <button class="nav-btn active" data-view="browse">Browse</button>
         <button class="nav-btn" data-view="search">Search</button>
         <button class="nav-btn" data-view="queue">Up Next</button>
+        <button class="nav-btn" data-view="lyrics">Lyrics</button>
       </nav>
       <div class="playlists-head">
         <span>Playlists</span>
@@ -67,6 +68,14 @@
         </div>
         <div id="playlistList"></div>
         <p id="playlistMessage" class="message" hidden></p>
+      </section>
+
+      <!-- Lyrics view: words that light up as the song plays -->
+      <section id="lyricsView" hidden>
+        <h1>Lyrics</h1>
+        <p class="subtitle" id="lyricsSubtitle"></p>
+        <div id="lyricsLines" class="lyrics"></div>
+        <p id="lyricsMessage" class="message" hidden></p>
       </section>
 
     </main>

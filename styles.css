@@ -620,6 +620,33 @@ input[type="range"] {
   transform: none;
 }
 
+/* ---------- Lyrics ---------- */
+
+.lyrics {
+  max-width: 640px;
+  padding-bottom: 40px;
+}
+
+.lyric-line {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  color: #c9c9ce;
+  padding: 7px 0;
+  transition: color 0.3s ease;
+}
+
+.lyric-line.active {
+  color: var(--text);
+}
+
+.lyric-plain {
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
 /* ---------- Smaller screens ---------- */
 
 @media (max-width: 760px) {
