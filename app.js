@@ -10,8 +10,9 @@
 //   6. Loading trending tracks
 //   7. Search
 //   8. The player: play, pause, next, previous, skip
-//   9. Wiring up buttons and the audio element
-//  10. Start the app
+//   9. The Up Next list
+//  10. Wiring up buttons and the audio element
+//  11. Start the app
 // ============================================================
 
 
@@ -37,6 +38,9 @@ const searchMessage = document.getElementById("searchMessage");
 const searchInput = document.getElementById("searchInput");
 const browseView = document.getElementById("browseView");
 const searchView = document.getElementById("searchView");
+const queueView = document.getElementById("queueView");
+const queueList = document.getElementById("queueList");
+const queueMessage = document.getElementById("queueMessage");
 const navButtons = document.querySelectorAll(".nav-btn");
 
 const audio = document.getElementById("audio");
@@ -379,6 +383,78 @@ function updatePlayerUI(track) {
   playerTitle.textContent = track.title;
   playerArtist.textContent = artistName(track);
   document.title = track.title + " - " + artistName(track) + " | Sonara";
+
+  // Keep the Up Next list in sync every time a new track starts.
+  renderQueue();
+}
+
+
+// ---------- The Up Next list ----------
+
+// One row in the Up Next list: small artwork, title, artist.
+// The currently playing song gets highlighted.
+function queueRow(track, index) {
+  const row = document.createElement("button");
+  row.className = "queue-row";
+  if (index === currentIndex) {
+    row.className = "queue-row playing";
+  }
+
+  const art = document.createElement("div");
+  art.className = "q-art";
+  const url = artworkUrl(track, "150x150");
+  if (url) {
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "";
+    img.onerror = function () {
+      art.innerHTML = "";
+      art.appendChild(noteIcon());
+    };
+    art.appendChild(img);
+  } else {
+    art.appendChild(noteIcon());
+  }
+  row.appendChild(art);
+
+  const text = document.createElement("div");
+  text.className = "q-text";
+
+  const title = document.createElement("div");
+  title.className = "q-title";
+  title.textContent = track.title;
+  text.appendChild(title);
+
+  const artist = document.createElement("div");
+  artist.className = "q-artist";
+  artist.textContent = artistName(track);
+  text.appendChild(artist);
+
+  row.appendChild(text);
+
+  // Clicking a row jumps straight to that song.
+  row.addEventListener("click", function () {
+    currentIndex = index;
+    playCurrent();
+  });
+
+  return row;
+}
+
+// Rebuilds the Up Next list from the current queue.
+function renderQueue() {
+  queueList.innerHTML = "";
+
+  if (queue.length === 0) {
+    queueMessage.textContent = "Nothing queued yet. Play something first.";
+    queueMessage.hidden = false;
+    return;
+  }
+
+  queueMessage.hidden = true;
+  queue.forEach(function (track, index) {
+    queueList.appendChild(queueRow(track, index));
+  });
 }
 
 
@@ -444,8 +520,12 @@ navButtons.forEach(function (button) {
     const view = button.dataset.view;
     browseView.hidden = view !== "browse";
     searchView.hidden = view !== "search";
+    queueView.hidden = view !== "queue";
     if (view === "search") {
       searchInput.focus();
+    }
+    if (view === "queue") {
+      renderQueue();
     }
   });
 });

@@ -17,6 +17,7 @@
       <nav>
         <button class="nav-btn active" data-view="browse">Browse</button>
         <button class="nav-btn" data-view="search">Search</button>
+        <button class="nav-btn" data-view="queue">Up Next</button>
       </nav>
       <div class="sidebar-foot">Free and open source</div>
     </aside>
@@ -39,6 +40,14 @@
         <input id="searchInput" type="search" placeholder="Search songs or artists" autocomplete="off">
         <div id="searchGrid" class="grid"></div>
         <p id="searchMessage" class="message">Type above to find music.</p>
+      </section>
+
+      <!-- Up Next view: the current queue, hidden until picked -->
+      <section id="queueView" hidden>
+        <h1>Up Next</h1>
+        <p class="subtitle">Songs in your current list</p>
+        <div id="queueList"></div>
+        <p id="queueMessage" class="message">Nothing queued yet. Play something first.</p>
       </section>
 
     </main>
