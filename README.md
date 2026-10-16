@@ -4,7 +4,18 @@ Sonara is a free and open-source music app for Mac. This is v0.1, the web player
 
 ## Download the Mac app
 
-Grab the latest DMG from the [Releases page](../../releases). Open the DMG, drag Sonara into Applications, and on first launch right-click the app and choose Open.
+Grab the latest DMG from the [Releases page](../../releases) (Apple Silicon Macs only).
+
+1. Double-click the DMG, drag **Sonara** into **Applications**, eject the DMG.
+2. **Before opening Sonara**, run this in Terminal (Spotlight -> type "Terminal"):
+
+```
+xattr -cr /Applications/Sonara.app
+```
+
+> **Why?** macOS shows a *"Sonara is damaged"* popup for unsigned apps. The app is not broken — this one command tells macOS to trust it. After that it opens normally.
+
+3. Open Sonara from Applications. Drag it to your Dock for quick access.
 
 ## How to run
 
