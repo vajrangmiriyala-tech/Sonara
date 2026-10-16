@@ -1013,11 +1013,64 @@ deletePlaylistBtn.addEventListener("click", function () {
   showView("browse");
 });
 
-// Spacebar toggles play, but not while typing in the search box.
+// Keyboard shortcuts. One place for all of them, working both in the
+// browser and inside the Electron Mac app. Typing in a text box is
+// never hijacked: the search box and playlist name box keep their keys.
+let unmutedVolume = 0.8; // remembers the volume so M can bring it back
+
+function isTyping(target) {
+  if (!target || !target.tagName) {
+    return false;
+  }
+  const tag = target.tagName.toUpperCase();
+  return tag === "INPUT" || tag === "TEXTAREA";
+}
+
+function nudgeVolume(step) {
+  if (audio.muted) {
+    audio.muted = false;
+  }
+  const next = Math.min(1, Math.max(0, audio.volume + step));
+  audio.volume = next;
+  volumeBar.value = next;
+}
+
+function toggleMute() {
+  if (audio.muted || audio.volume === 0) {
+    audio.muted = false;
+    if (audio.volume === 0) {
+      audio.volume = unmutedVolume;
+    }
+  } else {
+    unmutedVolume = audio.volume;
+    audio.muted = true;
+  }
+  volumeBar.value = audio.muted ? 0 : audio.volume;
+}
+
 document.addEventListener("keydown", function (event) {
+  if (isTyping(event.target)) {
+    return;
+  }
   if (event.code === "Space" && event.target === document.body) {
+    // Space on a focused button already clicks it, so only handle
+    // it here when nothing clickable has focus.
     event.preventDefault();
     togglePlay();
+  } else if (event.code === "ArrowRight") {
+    event.preventDefault();
+    nextTrack();
+  } else if (event.code === "ArrowLeft") {
+    event.preventDefault();
+    prevTrack();
+  } else if (event.code === "ArrowUp") {
+    event.preventDefault();
+    nudgeVolume(0.05);
+  } else if (event.code === "ArrowDown") {
+    event.preventDefault();
+    nudgeVolume(-0.05);
+  } else if (event.code === "KeyM") {
+    toggleMute();
   }
 });
 
