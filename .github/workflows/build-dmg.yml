@@ -5,7 +5,7 @@ name: Build Mac DMG
 on:
   push:
     tags: ["v*"]
-    workflow_dispatch:
+  workflow_dispatch:
 
 jobs:
   build:
