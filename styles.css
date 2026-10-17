@@ -2053,3 +2053,68 @@ body.mini-window .mini-player {
   color: var(--muted);
   margin: 0 0 14px;
 }
+
+/* ============================================================
+   v0.6: language shelves + albums
+   ============================================================ */
+
+/* One language shelf: a title and a horizontal row of cards.
+   WHY a horizontal scroll: it mirrors the Spotify shelf pattern,
+   and it keeps the home page to one screen of scrolling per shelf. */
+.lang-shelf {
+  margin-top: 28px;
+}
+.lang-shelf h2 {
+  font-size: 20px;
+  margin: 0 0 12px;
+}
+.shelf-row {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  /* WHY thin scrollbar: the row is a filmstrip, not a page. */
+  scrollbar-width: thin;
+}
+.shelf-row .card {
+  /* WHY fixed width: cards in a scrolling row must not stretch. */
+  flex: 0 0 160px;
+  min-width: 160px;
+}
+
+/* Album page head: big cover left, name and artist right. */
+.album-head {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  margin: 16px 0 20px;
+}
+.album-art {
+  width: 180px;
+  height: 180px;
+  flex: 0 0 180px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--tile);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+}
+.album-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.album-meta h1 {
+  margin: 0 0 6px;
+}
+.album-meta .subtitle {
+  margin: 0 0 12px;
+}
+/* Track number column in the album's song list. */
+.album-num {
+  width: 28px;
+  flex: 0 0 28px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
