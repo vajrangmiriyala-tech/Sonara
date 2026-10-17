@@ -302,6 +302,10 @@ async function loadTrending() {
     renderTracks(trendingGrid, trendingTracks, function (index) {
       startQueue(trendingTracks, index);
     });
+    // v0.6: trending paints first; language shelves and new albums
+    // fill in afterwards, each on its own time.
+    loadLanguageShelves();
+    discoverAlbums();
     if (browseMode === "flow") {
       renderCoverflow();
     }
@@ -1221,6 +1225,7 @@ function showView(view) {
   libraryView.hidden = view !== "library";
   statsView.hidden = view !== "stats";
   chartsView.hidden = view !== "charts";
+  albumView.hidden = view !== "album";
 
   navButtons.forEach(function (other) {
     other.classList.toggle("active", other.dataset.view === view);
@@ -5632,6 +5637,358 @@ if (window.sonara && window.sonara.onDownloadProgress) {
   });
 }
 updateMixtapeBtn();
+
+
+// ---------- 27. v0.6: language shelves on the home page ----------
+
+// The Audius API has no language field (verified 2026-10-16), so each
+// shelf is a keyword search, ranked by real play counts. The most
+// played tracks float up; keyword false positives sink. Shelf titles
+// name the language only and promise nothing more.
+const LANG_SHELVES = [
+  { query: "telugu", title: "Telugu Hits" },
+  { query: "hindi", title: "Hindi Hits" },
+  { query: "punjabi", title: "Punjabi Hits" },
+  { query: "tamil", title: "Tamil Hits" },
+  { query: "bhojpuri", title: "Bhojpuri Hits" },
+  { query: "bengali", title: "Bengali Hits" },
+  { query: "marathi", title: "Marathi Hits" }
+];
+const langShelves = document.getElementById("langShelves");
+// Every loadTrending run bumps this; late responses from an older run
+// are dropped so shelves never duplicate (e.g. after hide/unhide).
+let shelfGen = 0;
+
+function loadLanguageShelves() {
+  const gen = ++shelfGen;
+  langShelves.innerHTML = "";
+  // Each shelf resolves on its own; a slow or failed language never
+  // blocks the others, and the trending grid painted long before this.
+  LANG_SHELVES.forEach(function (shelf) {
+    fetch(API_BASE + "/tracks/search?query=" +
+        encodeURIComponent(shelf.query) +
+        "&limit=30&app_name=" + APP_NAME)
+      .then(function (res) {
+        if (!res.ok) {
+          throw new Error("bad response");
+        }
+        return res.json();
+      })
+      .then(function (json) {
+        if (gen !== shelfGen) {
+          return; // a newer load started; drop this stale shelf
+        }
+        const tracks = visibleTracks(json.data || [])
+          .sort(function (a, b) {
+            return (b.play_count || 0) - (a.play_count || 0);
+          })
+          .slice(0, 10);
+        if (tracks.length === 0) {
+          return; // silent hide: no shelf for this language
+        }
+        renderLangShelf(shelf.title, tracks);
+      })
+      .catch(function () {
+        // Silent: the shelf simply does not appear.
+      });
+  });
+}
+
+function renderLangShelf(title, tracks) {
+  const wrap = document.createElement("section");
+  wrap.className = "lang-shelf";
+  const h = document.createElement("h2");
+  h.textContent = title;
+  wrap.appendChild(h);
+  const row = document.createElement("div");
+  row.className = "shelf-row";
+  tracks.forEach(function (track, index) {
+    row.appendChild(trackCard(track, index, function (i) {
+      startQueue(tracks, i);
+    }));
+  });
+  wrap.appendChild(row);
+  langShelves.appendChild(wrap);
+}
+
+
+// ---------- 28. v0.6: albums (Spotify-style album pages) ----------
+
+// Audius marks real albums with is_album=true on playlists. Search
+// rarely surfaces them, but /v1/users/{id}/albums does, so "New
+// Albums" is built from the artists behind today's trending tracks.
+// The list is cached for a day; albums are the artist's own releases.
+let albumCache = null;
+let albumCacheAt = 0;
+const ALBUM_CACHE_MS = 24 * 3600 * 1000;
+const albumView = document.getElementById("albumView");
+const albumBack = document.getElementById("albumBack");
+const albumArt = document.getElementById("albumArt");
+const albumTitle = document.getElementById("albumTitle");
+const albumArtist = document.getElementById("albumArtist");
+const albumPlay = document.getElementById("albumPlay");
+const albumList = document.getElementById("albumList");
+const albumMessage = document.getElementById("albumMessage");
+let openAlbum = null;   // the album object on screen
+let openAlbumTracks = []; // its resolved tracks, in order
+let albumLoadToken = 0; // drops late responses if another album opens
+
+function discoverAlbums() {
+  const gen = shelfGen;
+  if (albumCache && Date.now() - albumCacheAt < ALBUM_CACHE_MS) {
+    renderAlbumShelf(albumCache, gen);
+    return;
+  }
+  // Unique artists from trending, a dozen at most. Each artist's
+  // albums resolve independently; the shelf appears with whatever
+  // arrived, up to ten albums.
+  const seen = {};
+  const artists = [];
+  trendingTracks.forEach(function (t) {
+    const uid = t.user_id || (t.user && t.user.id);
+    if (uid && !seen[uid]) {
+      seen[uid] = true;
+      artists.push(uid);
+    }
+  });
+  const found = [];
+  let pending = 0;
+  artists.slice(0, 12).forEach(function (uid) {
+    pending++;
+    fetch(API_BASE + "/users/" + uid + "/albums?limit=10&app_name=" +
+        APP_NAME)
+      .then(function (res) {
+        return res.ok ? res.json() : null;
+      })
+      .then(function (json) {
+        (json && json.data || []).forEach(function (a) {
+          if (a && a.is_album === true && found.length < 10 &&
+              !found.some(function (x) { return x.id === a.id; })) {
+            found.push(a);
+          }
+        });
+      })
+      .catch(function () {
+        // One artist failing never blocks the shelf.
+      })
+      .then(function () {
+        pending--;
+        if (pending === 0) {
+          albumCache = found;
+          albumCacheAt = Date.now();
+          renderAlbumShelf(found, gen);
+        }
+      });
+  });
+  if (artists.length === 0) {
+    renderAlbumShelf([], gen);
+  }
+}
+
+function renderAlbumShelf(albums, gen) {
+  // The shelf lives with the language shelves, first among them.
+  if (gen !== shelfGen) {
+    return; // a newer load started; drop this stale shelf
+  }
+  if (!albums || albums.length === 0) {
+    return; // silent hide, like the language shelves
+  }
+  const wrap = document.createElement("section");
+  wrap.className = "lang-shelf";
+  const h = document.createElement("h2");
+  h.textContent = "New Albums";
+  wrap.appendChild(h);
+  const row = document.createElement("div");
+  row.className = "shelf-row";
+  albums.forEach(function (album) {
+    row.appendChild(albumCard(album));
+  });
+  wrap.appendChild(row);
+  langShelves.insertBefore(wrap, langShelves.firstChild);
+}
+
+// One album card: cover, name, artist. Tapping opens the album page.
+function albumCard(album) {
+  const card = document.createElement("article");
+  card.className = "card";
+  card.tabIndex = 0;
+  const art = document.createElement("div");
+  art.className = "artwork";
+  const url = album.artwork ? album.artwork["480x480"] : null;
+  if (url) {
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "";
+    img.onerror = function () {
+      art.innerHTML = "";
+      art.appendChild(noteIcon());
+    };
+    art.appendChild(img);
+  } else {
+    art.appendChild(noteIcon());
+  }
+  card.appendChild(art);
+  const title = document.createElement("div");
+  title.className = "card-title";
+  title.textContent = album.playlist_name || "Untitled album";
+  card.appendChild(title);
+  const artist = document.createElement("div");
+  artist.className = "card-artist";
+  const u = album.user || {};
+  artist.textContent = u.name || u.handle || "Unknown artist";
+  card.appendChild(artist);
+  function open() {
+    openAlbumView(album);
+  }
+  card.addEventListener("click", open);
+  card.addEventListener("keydown", function (event) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      open();
+    }
+  });
+  return card;
+}
+
+// The dedicated album page: big cover, name, artist, tracks in order.
+function openAlbumView(album) {
+  openAlbum = album;
+  openAlbumTracks = [];
+  const token = ++albumLoadToken;
+  const u = album.user || {};
+  // Title first: showView replays the headline reveal on the new name.
+  albumTitle.textContent = album.playlist_name || "Untitled album";
+  albumArtist.textContent = u.name || u.handle || "Unknown artist";
+  showView("album");
+  albumArt.innerHTML = "";
+  const url = album.artwork ? album.artwork["480x480"] : null;
+  if (url) {
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "";
+    img.onerror = function () {
+      albumArt.innerHTML = "";
+      albumArt.appendChild(noteIcon());
+    };
+    albumArt.appendChild(img);
+  } else {
+    albumArt.appendChild(noteIcon());
+  }
+  albumList.innerHTML = "";
+  albumMessage.hidden = false;
+  albumMessage.textContent = "Loading tracks...";
+  const ids = (album.playlist_contents || [])
+    .map(function (c) { return c && c.track_id; })
+    .filter(function (id) { return !!id; });
+  fetchAlbumTracks(ids).then(function (tracks) {
+    if (token !== albumLoadToken) {
+      return; // the user opened another album meanwhile
+    }
+    openAlbumTracks = visibleTracks(tracks);
+    albumMessage.hidden = openAlbumTracks.length > 0;
+    if (openAlbumTracks.length === 0) {
+      albumMessage.textContent = "No playable tracks on this album.";
+      return;
+    }
+    openAlbumTracks.forEach(function (track, index) {
+      albumList.appendChild(albumTrackRow(track, index));
+    });
+  });
+}
+
+// Resolves track ids to full track objects, in order. Four fetches run
+// at once; one bad track is skipped, never breaking the album.
+function fetchAlbumTracks(ids) {
+  return new Promise(function (resolve) {
+    if (ids.length === 0) {
+      resolve([]);
+      return;
+    }
+    const out = new Array(ids.length);
+    let finished = 0;
+    let next = 0;
+    function worker() {
+      if (next >= ids.length) {
+        return;
+      }
+      const idx = next++;
+      fetch(API_BASE + "/tracks/" + ids[idx] + "?app_name=" + APP_NAME)
+        .then(function (res) {
+          return res.ok ? res.json() : null;
+        })
+        .then(function (json) {
+          out[idx] = json && json.data ? json.data : null;
+        })
+        .catch(function () {
+          out[idx] = null;
+        })
+        .then(function () {
+          finished++;
+          if (finished === ids.length) {
+            resolve(out.filter(function (t) { return !!t; }));
+          } else {
+            worker();
+          }
+        });
+    }
+    const workers = Math.min(4, ids.length);
+    for (let w = 0; w < workers; w++) {
+      worker();
+    }
+  });
+}
+
+// One row in the album's track list. Tapping plays the album from here.
+function albumTrackRow(track, index) {
+  const row = document.createElement("div");
+  row.className = "queue-row";
+  row.tabIndex = 0;
+  row.setAttribute("role", "button");
+  const num = document.createElement("div");
+  num.className = "album-num";
+  num.textContent = String(index + 1);
+  row.appendChild(num);
+  const text = document.createElement("div");
+  text.className = "q-text";
+  const title = document.createElement("div");
+  title.className = "q-title";
+  title.textContent = track.title;
+  text.appendChild(title);
+  const artist = document.createElement("div");
+  artist.className = "q-artist";
+  artist.textContent = artistName(track);
+  text.appendChild(artist);
+  row.appendChild(text);
+  const dlBtn = downloadButton(track, "dl-btn");
+  if (dlBtn) {
+    row.appendChild(dlBtn);
+  }
+  row.appendChild(likeButton(track, "like-btn"));
+  function play() {
+    startQueue(openAlbumTracks, index);
+  }
+  row.addEventListener("click", play);
+  row.addEventListener("keydown", function (event) {
+    if (event.target !== row) {
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      play();
+    }
+  });
+  return row;
+}
+
+albumBack.addEventListener("click", function () {
+  showView("browse");
+});
+
+albumPlay.addEventListener("click", function () {
+  if (openAlbumTracks.length > 0) {
+    startQueue(openAlbumTracks, 0);
+  }
+});
 
 
 // ---------- 10. Start the app ----------
