@@ -4,6 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sonara</title>
+  <!-- v0.6: Content Security Policy. What each line allows:
+       - script-src 'self': only our own app.js runs. No inline scripts exist.
+       - connect-src: only the APIs the app actually calls (verified by
+         grepping every https:// in app.js). This is the important one:
+         it stops any injected code from sending your data elsewhere.
+       - img-src https:: artwork comes from Audius's decentralized content
+         nodes (audius-03.staked.cloud, *.theblueprint.xyz, and others that
+         change over time), plus Wikipedia thumbnails. Listing them all is
+         impossible, so any HTTPS image is allowed. Images cannot run code.
+       - media-src https:: streams start at the API but redirect to those
+         same content nodes. blob: is for local files, file: for downloads.
+       - default-src 'self': everything else (styles, fonts) is local only. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src https://discoveryprovider.audius.co https://en.wikipedia.org https://api.song.link https://lrclib.net https://accounts.spotify.com https://api.spotify.com; img-src https: data:; media-src https: blob: file:">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23ff6b35'/%3E%3Cpath d='M40 10v26.9c-.8-.5-1.8-.8-2.9-.8-3.2 0-5.8 2.6-5.8 5.8s2.6 5.8 5.8 5.8 5.8-2.6 5.8-5.8V22l6-1.6V10H40z' fill='white'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -69,6 +82,9 @@
           <button id="flowViewBtn" class="text-btn view-toggle">Coverflow</button>
         </div>
         <div id="trendingGrid" class="grid"></div>
+        <!-- v0.6: language shelves fill in below, one per language,
+             after the trending grid has already painted. -->
+        <div id="langShelves"></div>
         <div id="coverflowWrap" class="coverflow-wrap" hidden>
           <button id="flowPrev" class="ctrl-btn flow-arrow" aria-label="Previous album">&#8249;</button>
           <div id="coverflow" class="coverflow"></div>
@@ -183,6 +199,21 @@
         <div id="chartPills" class="chart-pills" role="tablist" aria-label="Genres"></div>
         <div id="chartsGrid" class="grid"></div>
         <p id="chartsMessage" class="message">Loading charts...</p>
+      </section>
+
+      <!-- Album view: a dedicated page for one album (v0.6) -->
+      <section id="albumView" hidden>
+        <button id="albumBack" class="text-btn">Back</button>
+        <div class="album-head">
+          <div id="albumArt" class="album-art artwork-missing"></div>
+          <div class="album-meta">
+            <h1 id="albumTitle">Album</h1>
+            <p class="subtitle" id="albumArtist"></p>
+            <button id="albumPlay" class="text-btn">Play</button>
+          </div>
+        </div>
+        <div id="albumList"></div>
+        <p id="albumMessage" class="message" hidden></p>
       </section>
 
     </main>
