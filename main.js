@@ -1,8 +1,29 @@
 // ============================================================
-// Sonara v0.3 - the Mac app shell (Electron)
+// Sonara v0.6 - the Mac app shell (Electron)
 // This file runs in the "main" process: it creates the window
 // and the native Mac menu. The music player itself still lives
 // in index.html / app.js, which load inside the window.
+// ------------------------------------------------------------
+// SECURITY MODEL (v0.6 hardening):
+// - contextIsolation: true + sandbox: true. The web page runs in a
+//   locked-down renderer with no Node.js access at all. It can only
+//   talk to this process through the tiny, named API in preload.js
+//   (downloadTrack, onDownloadProgress, ...). Nothing else crosses.
+// - Content-Security-Policy (index.html <meta>): only our own app.js
+//   may run as script; network calls (fetch/XHR) may only reach the
+//   six API hosts the app actually uses; images/media may come from
+//   any HTTPS host (Audius artwork and streams live on a changing
+//   set of decentralized content nodes, so allowlisting them all is
+//   impossible). Images and audio cannot run code.
+// - Download guard (download-track handler below): the file URL must
+//   be HTTPS and may not point at a private or local address. The URL
+//   comes from the Audius API today; this is defense in depth against
+//   a spoofed response turning the downloader into a network probe.
+// - Rendering: app.js sets every API string via textContent (never
+//   innerHTML). The only innerHTML uses are "" (clearing) and
+//   hardcoded SVG icon constants. No API data ever becomes HTML.
+// - No secrets in code: the app has no API keys, no tokens, no
+//   credentials. Spotify uses the user's own OAuth code flow.
 // ============================================================
 
 const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
@@ -28,9 +49,11 @@ function createWindow() {
     backgroundColor: "#f5f5f7",
     webPreferences: {
       // preload.js is the only bridge between this file and the
-      // web page. contextIsolation keeps the page safe.
+      // web page. contextIsolation + sandbox keep the page in a
+      // locked-down renderer with no Node.js access of its own.
       preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true
+      contextIsolation: true,
+      sandbox: true
     }
   });
 
@@ -211,6 +234,29 @@ ipcMain.on("download-track", function (event, payload) {
   const url = payload && payload.url;
   if (!trackId || !url || activeDownloads[trackId]) {
     return; // bad input, or a double-tap: never start twice
+  }
+  // v0.6: download URL guard. The file must come over HTTPS, and never
+  // from a private or local address (that would let a spoofed API
+  // response probe the user's own network). Legitimate download URLs
+  // live on Audius's decentralized content nodes, whose hostnames
+  // change, so we guard the shape of the URL, not its hostname.
+  let urlOk = false;
+  try {
+    const u = new URL(String(url));
+    const host = u.hostname.toLowerCase();
+    const isPrivate = host === "localhost" || host === "::1" ||
+      /^127\./.test(host) || /^10\./.test(host) ||
+      /^192\.168\./.test(host) || /^169\.254\./.test(host) ||
+      /^172\.(1[6-9]|2[0-9]|3[01])\./.test(host) ||
+      host === "0.0.0.0";
+    urlOk = u.protocol === "https:" && !isPrivate;
+  } catch (e) {
+    urlOk = false;
+  }
+  if (!urlOk) {
+    sender.send("download-error",
+      { trackId: trackId, message: "Download refused: unexpected address." });
+    return;
   }
   activeDownloads[trackId] = true;
 
